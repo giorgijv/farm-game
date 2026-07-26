@@ -4,7 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Farm Life</title>
+<meta name="description" content="Plant and harvest crops, raise animals, and sell what you produce at the market.">
+<meta name="theme-color" content="#7ec8f0">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚜</text></svg>">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -43,6 +47,12 @@
       <button class="tab-btn" data-tab="market"><span class="tab-icon">🛒</span> Market</button>
       <button class="tab-btn" data-tab="achievements"><span class="tab-icon">🏆</span> Awards</button>
     </nav>
+
+    <div class="welcome-banner hidden" id="welcomeBack" role="status">
+      <span class="welcome-icon" aria-hidden="true">🌅</span>
+      <span class="welcome-text" id="welcomeBackText"></span>
+      <button id="welcomeDismissBtn">Nice!</button>
+    </div>
 
     <!-- FARM TAB -->
     <section id="farmTab" class="tab-screen field-screen">
@@ -103,7 +113,7 @@
 
   </div>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <div id="fxLayer" class="fx-layer" aria-hidden="true"></div>
 
 <script src="script.js"></script>

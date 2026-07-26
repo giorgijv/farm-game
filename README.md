@@ -30,11 +30,28 @@ npm run serve     # http://localhost:4173
 
 A full day passes every 90 seconds, carrying the sky from daylight through a
 warm dusk to a starlit night. Crops and animals run on real timestamps, so
-they keep progressing while the tab is closed.
+they keep progressing while the tab is closed — come back after a while and a
+summary tells you what ripened while you were away.
 
 Progress saves automatically to `localStorage`. Because that is per-browser,
 the Market tab also offers **Download Save** / **Load Save** to back progress
 up or move it between devices.
+
+## Install and offline play
+
+The game ships a web app manifest and a service worker that precaches the
+whole app shell, so it can be installed to a home screen and played with no
+network connection. As usual for service workers, the first visit runs from
+the network and the offline cache takes effect from the next load onwards.
+
+## Accessibility
+
+Every control is a real button, so the whole game — including the plot grid —
+is reachable and operable from the keyboard, with a high-contrast focus ring.
+Plots carry descriptive labels ("Plot 3, Wheat ready to harvest"), growth and
+production are exposed as progress bars, and status messages are announced
+through a polite live region. Animation is disabled under
+`prefers-reduced-motion`.
 
 ## Development
 
@@ -45,6 +62,7 @@ offline once loaded.
 - `index.html` — markup and the scenery layers
 - `styles.css` — the whole visual system
 - `script.js` — game state, systems, rendering and audio
+- `sw.js` / `manifest.webmanifest` — offline caching and installability
 - `tests/` — Playwright end-to-end suite
 
 ### Tests
@@ -56,9 +74,10 @@ npm test
 ```
 
 The suite covers the core loop, animal production, the market, achievements,
-the day cycle, and save loading/migration. It also asserts that the
-once-a-second render reuses DOM nodes, since rebuilding them would silently
-restart every CSS animation.
+the day cycle, save loading/migration, the welcome-back summary, keyboard
+operability, and offline play. It also asserts that the once-a-second render
+reuses DOM nodes, since rebuilding them would silently restart every CSS
+animation.
 
 If you are running in a sandbox that already ships a Chromium whose build
 number does not match this Playwright version, point the tests at it:

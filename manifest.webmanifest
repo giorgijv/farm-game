@@ -1,0 +1,25 @@
+{
+  "name": "Farm Life",
+  "short_name": "Farm Life",
+  "description": "Plant and harvest crops, raise animals, and sell what you produce at the market.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#7ec8f0",
+  "theme_color": "#7ec8f0",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

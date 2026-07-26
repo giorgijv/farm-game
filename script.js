@@ -130,6 +130,7 @@ function freshState() {
     unlockedAchievements: [],
     muted: false,
     onboarded: false,
+    lastSeenAt: Date.now(),
   };
 }
 
@@ -201,6 +202,9 @@ function migrateSave(parsed) {
   if (merged.selectedSeed && !CROPS[merged.selectedSeed]) merged.selectedSeed = null;
   merged.muted = Boolean(merged.muted);
   merged.onboarded = Boolean(merged.onboarded);
+  // Saves from before the welcome-back summary have no lastSeenAt; treat those
+  // players as having just arrived rather than reporting a bogus absence.
+  if (!Number.isFinite(merged.lastSeenAt)) merged.lastSeenAt = Date.now();
 
   return merged;
 }
@@ -438,22 +442,29 @@ function buildPlotCell(cell, plot, idx, sig) {
   cell.className = 'plot';
   cell.innerHTML = '';
   cell.onclick = null;
+  cell.disabled = false;
+  const label = `Plot ${idx + 1}`;
 
   if (idx >= state.unlockedPlots) {
     cell.classList.add('locked');
     const cost = PLOT_UNLOCK_BASE_COST + (idx - INITIAL_UNLOCKED_PLOTS) * PLOT_UNLOCK_INCREMENT;
-    cell.innerHTML = `<span>🔒</span><span class="plot-lock-cost">${cost}💰</span>`;
+    cell.innerHTML = `<span aria-hidden="true">🔒</span><span class="plot-lock-cost" aria-hidden="true">${cost}💰</span>`;
     if (idx === state.unlockedPlots) {
       cell.classList.add('unlockable');
       cell.title = `Unlock this plot for ${cost}💰`;
+      cell.setAttribute('aria-label', `${label}, locked. Unlock for ${cost} coins`);
       cell.onclick = () => unlockPlot();
     } else {
       cell.title = 'Unlock the previous plot first';
+      cell.setAttribute('aria-label', `${label}, locked. Unlock the previous plot first`);
+      // Nothing to activate, so keep it out of the tab order.
+      cell.disabled = true;
     }
   } else if (!plot.crop) {
     cell.classList.add('empty');
-    cell.textContent = '➕';
+    cell.innerHTML = '<span aria-hidden="true">➕</span>';
     cell.title = 'Plant a seed here';
+    cell.setAttribute('aria-label', `${label}, empty. Plant the selected seed`);
     cell.onclick = () => plantSeed(idx);
   } else {
     const crop = CROPS[plot.crop];
@@ -461,11 +472,14 @@ function buildPlotCell(cell, plot, idx, sig) {
     const sprite = document.createElement('span');
     sprite.className = 'crop-sprite';
 
+    sprite.setAttribute('aria-hidden', 'true');
+
     if (progress >= 1) {
       cell.classList.add('ready');
       sprite.textContent = crop.emoji;
       cell.appendChild(sprite);
       cell.title = `Harvest ${crop.name}`;
+      cell.setAttribute('aria-label', `${label}, ${crop.name} ready to harvest`);
       cell.onclick = () => harvestPlot(idx);
     } else {
       const stage = plotGrowthStage(progress);
@@ -474,9 +488,16 @@ function buildPlotCell(cell, plot, idx, sig) {
       // soil and progress bar stay fully legible.
       sprite.style.fontSize = `${0.62 + stage * 0.19}em`;
       cell.appendChild(sprite);
+      // Coarse label only: a live percentage here would make a screen reader
+      // re-announce the tile every second while it is focused.
+      cell.setAttribute('aria-label', `${label}, ${crop.name} growing`);
 
       const bar = document.createElement('div');
       bar.className = 'plot-progress';
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-label', `${crop.name} growth`);
+      bar.setAttribute('aria-valuemin', '0');
+      bar.setAttribute('aria-valuemax', '100');
       const fill = document.createElement('div');
       fill.className = 'plot-progress-fill';
       bar.appendChild(fill);
@@ -491,8 +512,11 @@ function renderPlots() {
   const grid = document.getElementById('plotsGrid');
 
   // Create the fixed set of tiles once, then reuse them across ticks.
+  // Real buttons so the grid is reachable and operable from the keyboard.
   while (grid.children.length < PLOT_COUNT) {
-    grid.appendChild(document.createElement('div'));
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    grid.appendChild(cell);
   }
 
   state.plots.forEach((plot, idx) => {
@@ -505,8 +529,10 @@ function renderPlots() {
     if (fill && plot.crop) {
       const crop = CROPS[plot.crop];
       const progress = clamp01((nowSec() - plot.plantedAt) / crop.growTime);
-      fill.style.width = `${Math.round(progress * 100)}%`;
-      cell.title = `${crop.name} growing... ${Math.round(progress * 100)}%`;
+      const percent = Math.round(progress * 100);
+      fill.style.width = `${percent}%`;
+      cell.title = `${crop.name} growing... ${percent}%`;
+      fill.parentElement.setAttribute('aria-valuenow', String(percent));
     }
   });
 }
@@ -568,6 +594,7 @@ function buildAnimalCard(card, animal, kind, def, ready, sig) {
   const emoji = document.createElement('div');
   emoji.className = 'animal-emoji';
   emoji.textContent = def.emoji;
+  emoji.setAttribute('aria-hidden', 'true');
   card.appendChild(emoji);
 
   const stateLabel = document.createElement('div');
@@ -589,6 +616,10 @@ function buildAnimalCard(card, animal, kind, def, ready, sig) {
 
     const bar = document.createElement('div');
     bar.className = 'animal-progress';
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-label', `${def.name} production`);
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', '100');
     const fill = document.createElement('div');
     fill.className = 'animal-progress-fill';
     bar.appendChild(fill);
@@ -659,7 +690,11 @@ function renderAnimalList(kind) {
     }
 
     const fill = card.querySelector('.animal-progress-fill');
-    if (fill) fill.style.width = `${Math.round(progress * 100)}%`;
+    if (fill) {
+      const percent = Math.round(progress * 100);
+      fill.style.width = `${percent}%`;
+      fill.parentElement.setAttribute('aria-valuenow', String(percent));
+    }
   });
 }
 
@@ -835,6 +870,70 @@ function dismissOnboarding() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Welcome back                                                          */
+/* ------------------------------------------------------------------ */
+
+// Below this, an absence isn't worth remarking on.
+const AWAY_REPORT_MIN_MS = 2 * 60 * 1000;
+
+function pluralise(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+function formatAway(ms) {
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 60) return pluralise(minutes, 'minute');
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return pluralise(hours, 'hour');
+  return pluralise(Math.floor(hours / 24), 'day');
+}
+
+// Work out what finished while the tab was closed. Crops and animals run off
+// absolute timestamps, so anything whose completion time falls between the
+// last visit and now ripened in the player's absence.
+function buildAwayReport(lastSeenAt) {
+  const awayMs = Date.now() - lastSeenAt;
+  if (!Number.isFinite(awayMs) || awayMs < AWAY_REPORT_MIN_MS) return null;
+
+  const seenAtSec = lastSeenAt / 1000;
+  const now = nowSec();
+
+  const crops = state.plots.filter((p) => {
+    if (!p.crop || !CROPS[p.crop]) return false;
+    const readyAt = p.plantedAt + CROPS[p.crop].growTime;
+    return readyAt <= now && readyAt > seenAtSec;
+  }).length;
+
+  let produce = 0;
+  ANIMAL_ORDER.forEach((kind) => {
+    const def = ANIMALS[kind];
+    state[def.stateKey].forEach((a) => {
+      if (a.state !== 'producing' || a.feedAt === null) return;
+      const doneAt = a.feedAt + def.produceTime;
+      if (doneAt <= now && doneAt > seenAtSec) produce += 1;
+    });
+  });
+
+  if (crops === 0 && produce === 0) return null;
+
+  const parts = [];
+  if (crops > 0) parts.push(`${pluralise(crops, 'crop')} ripened`);
+  if (produce > 0) parts.push(`${pluralise(produce, 'animal')} finished producing`);
+  return `Welcome back! You were away ${formatAway(awayMs)} — ${parts.join(' and ')}.`;
+}
+
+function showWelcomeBack(message) {
+  if (!message) return;
+  document.getElementById('welcomeBackText').textContent = message;
+  document.getElementById('welcomeBack').classList.remove('hidden');
+}
+
+function dismissWelcomeBack() {
+  document.getElementById('welcomeBack').classList.add('hidden');
+  SFX.click();
+}
+
+/* ------------------------------------------------------------------ */
 /* Save data export / import                                            */
 /* ------------------------------------------------------------------ */
 
@@ -958,7 +1057,11 @@ function renderTopbar() {
 
   const isNight = currentNightFactor > 0.5;
   document.getElementById('dayLabel').textContent = `${isNight ? '🌙 Night' : '☀️ Day'} ${state.day}`;
-  document.getElementById('muteBtn').textContent = state.muted ? '🔇' : '🔊';
+
+  const muteBtn = document.getElementById('muteBtn');
+  muteBtn.textContent = state.muted ? '🔇' : '🔊';
+  muteBtn.setAttribute('aria-label', state.muted ? 'Unmute sound' : 'Mute sound');
+  muteBtn.setAttribute('aria-pressed', String(state.muted));
 }
 
 function toggleMute() {
@@ -1051,6 +1154,7 @@ function render() {
 function tick() {
   updateDay();
   render();
+  state.lastSeenAt = Date.now();
   saveState();
 }
 
@@ -1059,11 +1163,15 @@ function tick() {
 /* ------------------------------------------------------------------ */
 
 function init() {
+  // Read the absence before anything overwrites lastSeenAt.
+  const awayReport = buildAwayReport(state.lastSeenAt);
+
   document.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
   });
   document.getElementById('muteBtn').addEventListener('click', toggleMute);
   document.getElementById('onboardingDismissBtn').addEventListener('click', dismissOnboarding);
+  document.getElementById('welcomeDismissBtn').addEventListener('click', dismissWelcomeBack);
 
   document.getElementById('downloadSaveBtn').addEventListener('click', downloadSave);
   const loadInput = document.getElementById('loadSaveInput');
@@ -1075,11 +1183,24 @@ function init() {
 
   // Persist straight away rather than waiting for the first tick, so a
   // migrated save is committed even if the player closes the tab immediately.
+  state.lastSeenAt = Date.now();
   saveState();
 
   updateDayNightVisuals();
   render();
+  showWelcomeBack(awayReport);
   setInterval(tick, 1000);
+  registerServiceWorker();
+}
+
+// Caches the app shell so the game keeps working offline and can be installed
+// to a home screen. Registration failing is never fatal — the game runs fine
+// without it (and service workers are unavailable on file:// URLs).
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  const register = () => navigator.serviceWorker.register('sw.js').catch(() => {});
+  if (document.readyState === 'complete') register();
+  else window.addEventListener('load', register, { once: true });
 }
 
 init();

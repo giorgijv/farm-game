@@ -441,6 +441,200 @@ test.describe('preferences', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Welcome back                                                        */
+/* ------------------------------------------------------------------ */
+
+test.describe('welcome back', () => {
+  const minutesAgo = (m) => Date.now() - m * 60_000;
+
+  test('summarises what finished while the tab was closed', async ({ page }) => {
+    await load(page, makeSave({
+      lastSeenAt: minutesAgo(10),
+      plots: [
+        { crop: 'wheat', plantedAt: secondsAgo(300) }, // ripened during the gap
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+      cows: [{ id: 1, state: 'producing', feedAt: secondsAgo(300) }],
+      nextAnimalId: 2,
+    }));
+
+    const banner = page.locator('#welcomeBack');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('1 crop ripened');
+    await expect(banner).toContainText('1 animal finished producing');
+
+    await page.locator('#welcomeDismissBtn').click();
+    await expect(banner).toBeHidden();
+  });
+
+  test('stays quiet after a short absence', async ({ page }) => {
+    await load(page, makeSave({
+      lastSeenAt: Date.now() - 30_000,
+      plots: [
+        { crop: 'wheat', plantedAt: secondsAgo(20) },
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+    }));
+
+    await expect(page.locator('#welcomeBack')).toBeHidden();
+  });
+
+  test('stays quiet when nothing actually finished', async ({ page }) => {
+    await load(page, makeSave({ lastSeenAt: minutesAgo(30) }));
+    await expect(page.locator('#welcomeBack')).toBeHidden();
+  });
+
+  test('a crop that was already ripe before leaving is not counted again', async ({ page }) => {
+    await load(page, makeSave({
+      lastSeenAt: minutesAgo(10),
+      plots: [
+        // Ripened an hour ago, well before the player left.
+        { crop: 'wheat', plantedAt: secondsAgo(3600) },
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+    }));
+
+    await expect(page.locator('#welcomeBack')).toBeHidden();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Accessibility                                                       */
+/* ------------------------------------------------------------------ */
+
+test.describe('accessibility', () => {
+  test('plots are real buttons with descriptive labels', async ({ page }) => {
+    await load(page, makeSave({
+      unlockedPlots: 8,
+      plots: [
+        { crop: 'wheat', plantedAt: secondsAgo(20) }, // ready
+        { crop: 'carrot', plantedAt: secondsAgo(2) }, // growing
+        ...Array.from({ length: PLOT_COUNT - 2 }, () => ({ crop: null, plantedAt: null })),
+      ],
+    }));
+
+    const cells = page.locator('#plotsGrid > *');
+    expect(await cells.first().evaluate((el) => el.tagName)).toBe('BUTTON');
+
+    await expect(cells.nth(0)).toHaveAttribute('aria-label', /Wheat ready to harvest/);
+    await expect(cells.nth(1)).toHaveAttribute('aria-label', /Carrot growing/);
+    await expect(cells.nth(2)).toHaveAttribute('aria-label', /empty/i);
+    await expect(cells.nth(8)).toHaveAttribute('aria-label', /locked. Unlock for 30 coins/);
+  });
+
+  test('an unreachable locked plot is disabled rather than a dead button', async ({ page }) => {
+    await load(page, makeSave({ unlockedPlots: 8 }));
+
+    await expect(page.locator('#plotsGrid > *').nth(8)).toBeEnabled();  // next to unlock
+    await expect(page.locator('#plotsGrid > *').nth(9)).toBeDisabled(); // not yet reachable
+  });
+
+  test('a crop can be planted using only the keyboard', async ({ page }) => {
+    await load(page, makeSave({ coins: 300 }));
+
+    // Focus the last seed, choose it with Enter, tab into the grid, plant.
+    await page.locator('.seed-btn').last().focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.seed-btn').last()).toHaveClass(/selected/);
+
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => document.activeElement.className)).toContain('plot');
+
+    await page.keyboard.press('Enter');
+    await expect.poll(() => coins(page)).toBe(265); // pumpkin seed costs 35
+    await expect(page.locator('#plotsGrid > *').first().locator('.crop-sprite')).toHaveCount(1);
+  });
+
+  test('growth is exposed as a progress bar', async ({ page }) => {
+    await load(page, makeSave({
+      plots: [
+        { crop: 'carrot', plantedAt: secondsAgo(25) }, // 50s grow time, ~50%
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+    }));
+
+    const bar = page.locator('#plotsGrid > *').first().locator('[role="progressbar"]');
+    await expect(bar).toHaveAttribute('aria-valuemax', '100');
+    const now = Number(await bar.getAttribute('aria-valuenow'));
+    expect(now).toBeGreaterThan(30);
+    expect(now).toBeLessThan(70);
+  });
+
+  test('the toast is an announced live region', async ({ page }) => {
+    await load(page, makeSave({ coins: 0 }));
+
+    await expect(page.locator('#toast')).toHaveAttribute('role', 'status');
+    await expect(page.locator('#toast')).toHaveAttribute('aria-live', 'polite');
+  });
+
+  test('the mute control reports its state', async ({ page }) => {
+    await load(page, makeSave({ muted: false }));
+
+    const mute = page.locator('#muteBtn');
+    await expect(mute).toHaveAttribute('aria-pressed', 'false');
+    await expect(mute).toHaveAttribute('aria-label', 'Mute sound');
+
+    await mute.click();
+    await expect(mute).toHaveAttribute('aria-pressed', 'true');
+    await expect(mute).toHaveAttribute('aria-label', 'Unmute sound');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Installability and offline play                                     */
+/* ------------------------------------------------------------------ */
+
+test.describe('progressive web app', () => {
+  test('serves a valid manifest with reachable icons', async ({ page, request }) => {
+    await load(page, makeSave());
+
+    const href = await page.locator('link[rel="manifest"]').getAttribute('href');
+    expect(href).toBe('manifest.webmanifest');
+
+    const res = await request.get(`/${href}`);
+    expect(res.status()).toBe(200);
+
+    const manifest = await res.json();
+    expect(manifest.name).toBe('Farm Life');
+    expect(manifest.display).toBe('standalone');
+    expect(manifest.icons.length).toBeGreaterThan(0);
+
+    for (const icon of manifest.icons) {
+      const iconRes = await request.get(`/${icon.src}`);
+      expect(iconRes.status(), `${icon.src} should be reachable`).toBe(200);
+      expect(iconRes.headers()['content-type']).toContain('image/png');
+    }
+  });
+
+  test('registers a service worker and still plays with the network down', async ({ page, context }) => {
+    await load(page, makeSave({ coins: 300 }));
+
+    // The very first page load is never controlled — the worker is still
+    // installing while that navigation is in flight. Wait for it to become
+    // active, then reload so this page is served through it.
+    await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const controlled = await page.evaluate(() => navigator.serviceWorker.controller !== null);
+      if (controlled) break;
+      await page.reload();
+      await page.waitForSelector('#plotsGrid .plot');
+    }
+    expect(await page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
+
+    await context.setOffline(true);
+    await page.reload();
+
+    // The shell came from the cache, and the game is still interactive.
+    await expect(page.locator('#plotsGrid .plot')).toHaveCount(PLOT_COUNT);
+    await page.locator('.seed-btn').first().click();
+    await page.locator('#plotsGrid .plot.empty').first().click();
+    await expect.poll(() => coins(page)).toBe(295);
+
+    await context.setOffline(false);
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Smoke                                                               */
 /* ------------------------------------------------------------------ */
 
