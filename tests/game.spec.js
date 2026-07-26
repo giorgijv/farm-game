@@ -811,6 +811,26 @@ test.describe('progressive web app', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Footer                                                              */
+/* ------------------------------------------------------------------ */
+
+test.describe('footer', () => {
+  test('credits the author and points at the other playable game', async ({ page }) => {
+    await load(page, makeSave());
+
+    const footer = page.locator('.site-footer');
+    await expect(footer).toContainText('made by Giorgi Jvarsheishvili');
+    await expect(footer).toContainText('Another game by Giorgi Jvarsheishvili');
+
+    // Must be the hosted game, not the source repository: a github.com link
+    // drops the player on a code page rather than into Juice Sort.
+    const href = await footer.getByRole('link').getAttribute('href');
+    expect(href).toBe('https://giorgijv.github.io/juice-sort/');
+    expect(href).not.toContain('github.com');
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Smoke                                                               */
 /* ------------------------------------------------------------------ */
 
