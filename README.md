@@ -23,10 +23,17 @@ npm run serve     # http://localhost:4173
 - **Animals** — buy cows, chickens and sheep. Feed each from your crop
   inventory to start production, then collect milk, eggs or wool when the
   timer finishes. Animals can be sold back for half their base price.
-- **Market** — sell produce for coins, review your holdings, and export or
-  import your save.
+- **Market** — sell produce for coins, review your holdings, adjust sound, and
+  export or import your save. It also sells four permanent **upgrades** —
+  faster crops, faster animals, larger harvests and better prices — each with
+  three increasingly expensive levels, so late-game coins always have
+  somewhere to go.
 - **Awards** — eleven achievements covering harvesting, livestock, expansion
   and wealth, each paying a one-off coin reward.
+
+Sound effects and the background music loop are synthesised with the Web Audio
+API — there are no audio files. Music, volume and a master mute live under
+Market → Sound.
 
 A full day passes every 90 seconds, carrying the sky from daylight through a
 warm dusk to a starlit night. Crops and animals run on real timestamps, so

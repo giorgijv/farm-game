@@ -51,6 +51,30 @@ const GOODS = {
   wool: { emoji: '🧶', name: 'Wool', sellPrice: 14 },
 };
 
+// Permanent purchases that give late-game coins somewhere to go once every
+// plot is unlocked. Each level multiplies its cost, so they stay meaningful
+// rather than becoming trivially affordable.
+const UPGRADES = {
+  sprinkler: {
+    name: 'Sprinkler', emoji: '💧', maxLevel: 3, baseCost: 120, costGrowth: 2,
+    describe: (lvl) => `Crops grow ${Math.round(lvl * 12)}% faster`,
+  },
+  feed: {
+    name: 'Rich Feed', emoji: '🌰', maxLevel: 3, baseCost: 150, costGrowth: 2,
+    describe: (lvl) => `Animals produce ${Math.round(lvl * 12)}% faster`,
+  },
+  fertiliser: {
+    name: 'Fertiliser', emoji: '🧪', maxLevel: 3, baseCost: 200, costGrowth: 2.2,
+    describe: (lvl) => `+${lvl} extra crop per harvest`,
+  },
+  contacts: {
+    name: 'Market Contacts', emoji: '🤝', maxLevel: 3, baseCost: 250, costGrowth: 2.2,
+    describe: (lvl) => `Goods sell for ${Math.round(lvl * 10)}% more`,
+  },
+};
+
+const UPGRADE_ORDER = ['sprinkler', 'feed', 'fertiliser', 'contacts'];
+
 const ACHIEVEMENTS = [
   {
     id: 'first_harvest', emoji: '🌱', name: 'First Harvest', reward: 10,
@@ -128,10 +152,43 @@ function freshState() {
     inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
     stats: { totalHarvested: 0, totalCoinsEarned: 0 },
     unlockedAchievements: [],
+    upgrades: { sprinkler: 0, feed: 0, fertiliser: 0, contacts: 0 },
     muted: false,
+    musicOn: true,
+    volume: 0.7,
     onboarded: false,
     lastSeenAt: Date.now(),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Derived stats — everything upgrades affect flows through here        */
+/* ------------------------------------------------------------------ */
+
+function upgradeLevel(key) {
+  const level = state.upgrades?.[key];
+  return Number.isFinite(level) ? level : 0;
+}
+
+function upgradeCost(key) {
+  const def = UPGRADES[key];
+  return Math.round(def.baseCost * def.costGrowth ** upgradeLevel(key));
+}
+
+function cropGrowTime(crop) {
+  return crop.growTime * (1 - 0.12 * upgradeLevel('sprinkler'));
+}
+
+function animalProduceTime(def) {
+  return def.produceTime * (1 - 0.12 * upgradeLevel('feed'));
+}
+
+function cropYield(crop) {
+  return crop.yield + upgradeLevel('fertiliser');
+}
+
+function goodPrice(key) {
+  return Math.round(GOODS[key].sellPrice * (1 + 0.10 * upgradeLevel('contacts')));
 }
 
 // Older save slots, newest first. Kept so bumping SAVE_KEY upgrades a player's
@@ -199,7 +256,19 @@ function migrateSave(parsed) {
     ? [...new Set(parsed.unlockedAchievements.filter((id) => knownAchievements.has(id)))]
     : [];
 
+  // Upgrade levels: default anything missing, clamp anything out of range,
+  // and drop keys for upgrades this build no longer offers.
+  const upgrades = {};
+  UPGRADE_ORDER.forEach((key) => {
+    const raw = (parsed.upgrades || {})[key];
+    const level = Number.isFinite(raw) ? Math.floor(raw) : 0;
+    upgrades[key] = Math.min(Math.max(level, 0), UPGRADES[key].maxLevel);
+  });
+  merged.upgrades = upgrades;
+
   if (merged.selectedSeed && !CROPS[merged.selectedSeed]) merged.selectedSeed = null;
+  merged.musicOn = merged.musicOn !== false;
+  merged.volume = Number.isFinite(merged.volume) ? Math.min(Math.max(merged.volume, 0), 1) : 0.7;
   merged.muted = Boolean(merged.muted);
   merged.onboarded = Boolean(merged.onboarded);
   // Saves from before the welcome-back summary have no lastSeenAt; treat those
@@ -301,8 +370,14 @@ function getAudioCtx() {
   return audioCtx;
 }
 
+function masterVolume() {
+  if (state.muted) return 0;
+  return Number.isFinite(state.volume) ? clamp01(state.volume) : 0.7;
+}
+
 function playTone(freq, duration, type, volume, delay) {
-  if (state.muted) return;
+  const level = volume * masterVolume();
+  if (level <= 0.0002) return;
   const ctx = getAudioCtx();
   if (!ctx) return;
   const startAt = ctx.currentTime + (delay || 0);
@@ -310,7 +385,7 @@ function playTone(freq, duration, type, volume, delay) {
   const gain = ctx.createGain();
   osc.type = type || 'sine';
   osc.frequency.value = freq;
-  gain.gain.setValueAtTime(volume, startAt);
+  gain.gain.setValueAtTime(level, startAt);
   gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
   osc.connect(gain);
   gain.connect(ctx.destination);
@@ -348,6 +423,66 @@ const SFX = {
   },
   click: () => playTone(600, 0.04, 'square', 0.04),
 };
+
+/* ------------------------------------------------------------------ */
+/* Background music                                                      */
+/* ------------------------------------------------------------------ */
+
+// A slow I-V-vi-IV progression in C. Each entry is [bass, and the triad
+// above it], arpeggiated gently — pastoral, and cheap to synthesise.
+const MUSIC_CHORDS = [
+  [130.81, [261.63, 329.63, 392.00]], // C
+  [196.00, [293.66, 392.00, 493.88]], // G
+  [220.00, [329.63, 440.00, 523.25]], // Am
+  [174.61, [261.63, 349.23, 440.00]], // F
+];
+
+const CHORD_MS = 3400;
+let musicTimer = null;
+let musicStep = 0;
+
+function playChord() {
+  if (!state.musicOn || masterVolume() <= 0) return;
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+
+  const [bass, triad] = MUSIC_CHORDS[musicStep % MUSIC_CHORDS.length];
+  musicStep += 1;
+
+  // Music sits well under the effects so it never competes with feedback.
+  const level = 0.05;
+  playTone(bass, 2.6, 'sine', level * 0.8, 0);
+  triad.forEach((freq, i) => playTone(freq, 2.0, 'triangle', level * 0.55, 0.18 * (i + 1)));
+}
+
+function startMusic() {
+  if (musicTimer !== null) return;
+  playChord();
+  musicTimer = setInterval(playChord, CHORD_MS);
+}
+
+function stopMusic() {
+  if (musicTimer === null) return;
+  clearInterval(musicTimer);
+  musicTimer = null;
+}
+
+function syncMusic() {
+  if (state.musicOn && !state.muted && masterVolume() > 0) startMusic();
+  else stopMusic();
+}
+
+// Browsers refuse to start audio before the player interacts with the page,
+// so the loop waits for the first real gesture.
+function armMusicOnFirstGesture() {
+  const start = () => {
+    syncMusic();
+    window.removeEventListener('pointerdown', start);
+    window.removeEventListener('keydown', start);
+  };
+  window.addEventListener('pointerdown', start);
+  window.addEventListener('keydown', start);
+}
 
 /* ------------------------------------------------------------------ */
 /* Tabs                                                                 */
@@ -433,7 +568,7 @@ function plotSignature(plot, idx) {
   }
   if (!plot.crop) return 'empty';
   const crop = CROPS[plot.crop];
-  const progress = clamp01((nowSec() - plot.plantedAt) / crop.growTime);
+  const progress = clamp01((nowSec() - plot.plantedAt) / cropGrowTime(crop));
   if (progress >= 1) return `ready:${plot.crop}`;
   return `grow:${plot.crop}:${plotGrowthStage(progress)}`;
 }
@@ -468,7 +603,7 @@ function buildPlotCell(cell, plot, idx, sig) {
     cell.onclick = () => plantSeed(idx);
   } else {
     const crop = CROPS[plot.crop];
-    const progress = clamp01((nowSec() - plot.plantedAt) / crop.growTime);
+    const progress = clamp01((nowSec() - plot.plantedAt) / cropGrowTime(crop));
     const sprite = document.createElement('span');
     sprite.className = 'crop-sprite';
 
@@ -528,7 +663,7 @@ function renderPlots() {
     const fill = cell.querySelector('.plot-progress-fill');
     if (fill && plot.crop) {
       const crop = CROPS[plot.crop];
-      const progress = clamp01((nowSec() - plot.plantedAt) / crop.growTime);
+      const progress = clamp01((nowSec() - plot.plantedAt) / cropGrowTime(crop));
       const percent = Math.round(progress * 100);
       fill.style.width = `${percent}%`;
       cell.title = `${crop.name} growing... ${percent}%`;
@@ -564,12 +699,13 @@ function harvestPlot(idx) {
   if (!plot.crop) return;
   const crop = CROPS[plot.crop];
   const elapsed = nowSec() - plot.plantedAt;
-  if (elapsed < crop.growTime) return;
-  state.inventory[plot.crop] += crop.yield;
-  state.stats.totalHarvested += crop.yield;
+  if (elapsed < cropGrowTime(crop)) return;
+  const yielded = cropYield(crop);
+  state.inventory[plot.crop] += yielded;
+  state.stats.totalHarvested += yielded;
   SFX.harvest();
-  spawnFloatText(`+${crop.yield} ${crop.emoji}`, document.getElementById('plotsGrid').children[idx], 'gain');
-  showToast(`Harvested ${crop.yield}x ${crop.emoji} ${crop.name}`);
+  spawnFloatText(`+${yielded} ${crop.emoji}`, document.getElementById('plotsGrid').children[idx], 'gain');
+  showToast(`Harvested ${yielded}x ${crop.emoji} ${crop.name}`);
   plot.crop = null;
   plot.plantedAt = null;
   saveState();
@@ -680,7 +816,7 @@ function renderAnimalList(kind) {
   list.forEach((animal, i) => {
     const card = container.children[i];
     const progress = animal.state === 'producing'
-      ? clamp01((nowSec() - animal.feedAt) / def.produceTime)
+      ? clamp01((nowSec() - animal.feedAt) / animalProduceTime(def))
       : 0;
     const ready = animal.state === 'producing' && progress >= 1;
     const sig = animalSignature(animal, def, ready);
@@ -720,7 +856,7 @@ function collectAnimal(kind, id) {
   const def = ANIMALS[kind];
   const animal = state[def.stateKey].find((a) => a.id === id);
   if (!animal || animal.state !== 'producing') return;
-  const progress = (nowSec() - animal.feedAt) / def.produceTime;
+  const progress = (nowSec() - animal.feedAt) / animalProduceTime(def);
   if (progress < 1) return;
   state.inventory[def.produceKey] += def.produceYield;
   SFX.collect();
@@ -784,10 +920,85 @@ function buyAnimal(kind) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Upgrades                                                             */
+/* ------------------------------------------------------------------ */
+
+function buyUpgrade(key) {
+  const def = UPGRADES[key];
+  const level = upgradeLevel(key);
+  if (level >= def.maxLevel) return;
+
+  const cost = upgradeCost(key);
+  if (state.coins < cost) {
+    SFX.error();
+    showToast('Not enough coins!');
+    return;
+  }
+
+  state.coins -= cost;
+  state.upgrades[key] = level + 1;
+  SFX.unlockPlot();
+  showToast(`${def.name} upgraded to level ${level + 1}!`);
+  saveState();
+  render();
+}
+
+function renderUpgrades() {
+  const list = document.getElementById('upgradeList');
+
+  if (list.children.length !== UPGRADE_ORDER.length) {
+    list.innerHTML = '';
+    UPGRADE_ORDER.forEach((key) => {
+      const def = UPGRADES[key];
+      const item = document.createElement('div');
+      item.className = 'upgrade-item';
+      item.innerHTML = `
+        <div class="item-emoji" aria-hidden="true">${def.emoji}</div>
+        <div class="upgrade-name">${def.name}</div>
+        <div class="upgrade-effect"></div>
+        <div class="upgrade-level"></div>
+      `;
+      const btn = document.createElement('button');
+      btn.addEventListener('click', () => buyUpgrade(key));
+      item.appendChild(btn);
+      list.appendChild(item);
+    });
+  }
+
+  UPGRADE_ORDER.forEach((key, i) => {
+    const def = UPGRADES[key];
+    const level = upgradeLevel(key);
+    const maxed = level >= def.maxLevel;
+    const item = list.children[i];
+
+    item.classList.toggle('maxed', maxed);
+    // Show what the upgrade is currently doing, or what the first level buys.
+    item.querySelector('.upgrade-effect').textContent =
+      level > 0 ? def.describe(level) : `Next: ${def.describe(1)}`;
+    item.querySelector('.upgrade-level').textContent = `Level ${level} / ${def.maxLevel}`;
+
+    const btn = item.querySelector('button');
+    if (maxed) {
+      btn.textContent = 'Maxed out';
+      btn.disabled = true;
+      btn.setAttribute('aria-label', `${def.name} is fully upgraded`);
+    } else {
+      const cost = upgradeCost(key);
+      btn.textContent = `Upgrade (${cost}💰)`;
+      btn.disabled = state.coins < cost;
+      btn.setAttribute('aria-label', `Upgrade ${def.name} to level ${level + 1} for ${cost} coins`);
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* Market tab                                                           */
 /* ------------------------------------------------------------------ */
 
 function renderMarket() {
+  renderUpgrades();
+  renderSoundSettings();
+
   const goods = Object.entries(GOODS);
   const sellList = document.getElementById('sellList');
 
@@ -800,7 +1011,7 @@ function renderMarket() {
         <div class="item-emoji">${good.emoji}</div>
         <div>${good.name}</div>
         <div class="market-have">Have: 0</div>
-        <div>${good.sellPrice}💰 each</div>
+        <div class="market-price">${good.sellPrice}💰 each</div>
       `;
       const btn = document.createElement('button');
       btn.addEventListener('click', () => sellAll(key));
@@ -809,12 +1020,15 @@ function renderMarket() {
     });
   }
 
-  goods.forEach(([key, good], i) => {
+  goods.forEach(([key], i) => {
     const qty = state.inventory[key];
+    const price = goodPrice(key);
     const item = sellList.children[i];
     item.querySelector('.market-have').textContent = `Have: ${qty}`;
+    // Priced through goodPrice so the Market Contacts upgrade shows up here.
+    item.querySelector('.market-price').textContent = `${price}💰 each`;
     const btn = item.querySelector('button');
-    btn.textContent = `Sell All (${qty * good.sellPrice}💰)`;
+    btn.textContent = `Sell All (${qty * price}💰)`;
     btn.disabled = qty <= 0;
   });
 
@@ -847,7 +1061,7 @@ function sellAll(key) {
   const qty = state.inventory[key];
   if (qty <= 0) return;
   const good = GOODS[key];
-  const earned = qty * good.sellPrice;
+  const earned = qty * goodPrice(key);
   state.coins += earned;
   state.stats.totalCoinsEarned += earned;
   state.inventory[key] = 0;
@@ -900,7 +1114,7 @@ function buildAwayReport(lastSeenAt) {
 
   const crops = state.plots.filter((p) => {
     if (!p.crop || !CROPS[p.crop]) return false;
-    const readyAt = p.plantedAt + CROPS[p.crop].growTime;
+    const readyAt = p.plantedAt + cropGrowTime(CROPS[p.crop]);
     return readyAt <= now && readyAt > seenAtSec;
   }).length;
 
@@ -909,7 +1123,7 @@ function buildAwayReport(lastSeenAt) {
     const def = ANIMALS[kind];
     state[def.stateKey].forEach((a) => {
       if (a.state !== 'producing' || a.feedAt === null) return;
-      const doneAt = a.feedAt + def.produceTime;
+      const doneAt = a.feedAt + animalProduceTime(def);
       if (doneAt <= now && doneAt > seenAtSec) produce += 1;
     });
   });
@@ -1067,8 +1281,40 @@ function renderTopbar() {
 function toggleMute() {
   state.muted = !state.muted;
   saveState();
+  syncMusic();
   render();
   SFX.click();
+}
+
+function toggleMusic() {
+  state.musicOn = !state.musicOn;
+  saveState();
+  syncMusic();
+  render();
+  SFX.click();
+}
+
+function setVolume(value) {
+  state.volume = clamp01(value);
+  // Reaching for the slider implies wanting to hear something.
+  if (state.volume > 0) state.muted = false;
+  saveState();
+  syncMusic();
+  render();
+}
+
+function renderSoundSettings() {
+  const musicBtn = document.getElementById('musicToggleBtn');
+  const slider = document.getElementById('volumeSlider');
+  const readout = document.getElementById('volumeReadout');
+  if (!musicBtn || !slider) return;
+
+  musicBtn.textContent = state.musicOn ? '🎵 Music: On' : '🎵 Music: Off';
+  musicBtn.setAttribute('aria-pressed', String(state.musicOn));
+
+  const percent = Math.round(masterVolume() * 100);
+  if (document.activeElement !== slider) slider.value = String(percent);
+  readout.textContent = `${percent}%`;
 }
 
 function updateDay() {
@@ -1173,6 +1419,10 @@ function init() {
   document.getElementById('onboardingDismissBtn').addEventListener('click', dismissOnboarding);
   document.getElementById('welcomeDismissBtn').addEventListener('click', dismissWelcomeBack);
 
+  document.getElementById('musicToggleBtn').addEventListener('click', toggleMusic);
+  const volumeSlider = document.getElementById('volumeSlider');
+  volumeSlider.addEventListener('input', () => setVolume(Number(volumeSlider.value) / 100));
+
   document.getElementById('downloadSaveBtn').addEventListener('click', downloadSave);
   const loadInput = document.getElementById('loadSaveInput');
   document.getElementById('loadSaveBtn').addEventListener('click', () => loadInput.click());
@@ -1190,6 +1440,7 @@ function init() {
   render();
   showWelcomeBack(awayReport);
   setInterval(tick, 1000);
+  armMusicOnFirstGesture();
   registerServiceWorker();
 }
 

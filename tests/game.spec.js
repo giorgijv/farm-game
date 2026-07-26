@@ -21,8 +21,12 @@ function makeSave(overrides = {}) {
     inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
     stats: { totalHarvested: 0, totalCoinsEarned: 0 },
     unlockedAchievements: [],
+    upgrades: { sprinkler: 0, feed: 0, fertiliser: 0, contacts: 0 },
     muted: true,
+    musicOn: false,
+    volume: 0.7,
     onboarded: true,
+    lastSeenAt: Date.now(),
     ...overrides,
   };
 }
@@ -437,6 +441,181 @@ test.describe('preferences', () => {
     await page.reload();
     await page.waitForSelector('#plotsGrid .plot');
     await expect(page.locator('#onboardingBanner')).toBeHidden();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Upgrades                                                            */
+/* ------------------------------------------------------------------ */
+
+test.describe('upgrades', () => {
+  const upgradeCard = (page, name) =>
+    page.locator('#upgradeList .upgrade-item').filter({ hasText: name });
+
+  test('buying a level charges the cost and records it', async ({ page }) => {
+    await load(page, makeSave({ coins: 500 }));
+    await page.getByRole('button', { name: /Market/ }).click();
+
+    const sprinkler = upgradeCard(page, 'Sprinkler');
+    await expect(sprinkler.locator('.upgrade-level')).toHaveText('Level 0 / 3');
+    await sprinkler.getByRole('button').click();
+
+    await expect.poll(() => coins(page)).toBe(380); // base cost 120
+    await expect(sprinkler.locator('.upgrade-level')).toHaveText('Level 1 / 3');
+    await expect.poll(async () => (await readSave(page)).upgrades.sprinkler).toBe(1);
+  });
+
+  test('each level costs more than the last', async ({ page }) => {
+    await load(page, makeSave({ coins: 10_000 }));
+    await page.getByRole('button', { name: /Market/ }).click();
+
+    const sprinkler = upgradeCard(page, 'Sprinkler');
+    const costs = [];
+    for (let i = 0; i < 3; i += 1) {
+      const label = await sprinkler.getByRole('button').textContent();
+      costs.push(Number(label.match(/(\d+)/)[1]));
+      await sprinkler.getByRole('button').click();
+      await expect(sprinkler.locator('.upgrade-level')).toHaveText(`Level ${i + 1} / 3`);
+    }
+
+    expect(costs).toEqual([120, 240, 480]);
+    await expect(sprinkler.getByRole('button')).toBeDisabled();
+    await expect(sprinkler.getByRole('button')).toHaveText('Maxed out');
+  });
+
+  test('a level cannot be bought without the coins', async ({ page }) => {
+    await load(page, makeSave({ coins: 10 }));
+    await page.getByRole('button', { name: /Market/ }).click();
+
+    await expect(upgradeCard(page, 'Sprinkler').getByRole('button')).toBeDisabled();
+    await expect.poll(async () => (await readSave(page)).upgrades.sprinkler).toBe(0);
+  });
+
+  test('the sprinkler actually shortens growing time', async ({ page }) => {
+    // Wheat takes 15s; at level 3 that drops to 9.6s. A crop planted 12s ago
+    // is therefore still growing at level 0 but ready at level 3.
+    const plots = () => [
+      { crop: 'wheat', plantedAt: secondsAgo(12) },
+      ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+    ];
+
+    await load(page, makeSave({ plots: plots() }));
+    await expect(page.locator('#plotsGrid > *').first()).not.toHaveClass(/ready/);
+
+    await load(page, makeSave({
+      plots: plots(),
+      upgrades: { sprinkler: 3, feed: 0, fertiliser: 0, contacts: 0 },
+    }));
+    await expect(page.locator('#plotsGrid > *').first()).toHaveClass(/ready/);
+  });
+
+  test('fertiliser adds to every harvest', async ({ page }) => {
+    await load(page, makeSave({
+      upgrades: { sprinkler: 0, feed: 0, fertiliser: 2, contacts: 0 },
+      plots: [
+        { crop: 'wheat', plantedAt: secondsAgo(20) },
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+    }));
+
+    await page.locator('#plotsGrid > *').first().click();
+    await expect.poll(async () => (await inventory(page)).wheat).toBe(5); // 3 base + 2
+  });
+
+  test('market contacts raise both the quoted and the paid price', async ({ page }) => {
+    await load(page, makeSave({
+      coins: 0,
+      upgrades: { sprinkler: 0, feed: 0, fertiliser: 0, contacts: 3 },
+      inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 2, egg: 0, wool: 0 },
+    }));
+    await page.getByRole('button', { name: /Market/ }).click();
+
+    // Milk is 9 base; +30% rounds to 12.
+    const milk = page.locator('#sellList .market-item').filter({ hasText: 'Milk' });
+    await expect(milk.locator('.market-price')).toHaveText('12💰 each');
+
+    await milk.getByRole('button').click();
+    await expect.poll(() => coins(page)).toBe(24);
+  });
+
+  test('rich feed shortens animal production', async ({ page }) => {
+    // Chickens take 15s; at level 3 that is 9.6s.
+    const cows = () => [{ id: 1, state: 'producing', feedAt: secondsAgo(12) }];
+
+    await load(page, makeSave({
+      chickens: [{ id: 1, state: 'producing', feedAt: secondsAgo(12) }],
+      nextAnimalId: 2,
+    }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+    await expect(page.locator('#chickenList .animal-state.producing')).toHaveCount(1);
+
+    await load(page, makeSave({
+      chickens: [{ id: 1, state: 'producing', feedAt: secondsAgo(12) }],
+      nextAnimalId: 2,
+      upgrades: { sprinkler: 0, feed: 3, fertiliser: 0, contacts: 0 },
+    }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+    await expect(page.locator('#chickenList .animal-state.ready')).toHaveCount(1);
+    void cows;
+  });
+
+  test('upgrade levels survive migration and are clamped', async ({ page }) => {
+    await load(page, makeSave({
+      upgrades: { sprinkler: 2, feed: 99, fertiliser: -4, nonsense: 7 },
+    }));
+
+    const saved = (await readSave(page)).upgrades;
+    expect(saved.sprinkler).toBe(2);
+    expect(saved.feed).toBe(3);       // clamped to maxLevel
+    expect(saved.fertiliser).toBe(0); // clamped up from negative
+    expect(saved.contacts).toBe(0);   // defaulted
+    expect(saved.nonsense).toBeUndefined();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Sound settings                                                      */
+/* ------------------------------------------------------------------ */
+
+test.describe('sound settings', () => {
+  test('music can be toggled and the choice persists', async ({ page }) => {
+    await load(page, makeSave({ musicOn: true }));
+    await page.getByRole('button', { name: /Market/ }).click();
+
+    const music = page.locator('#musicToggleBtn');
+    await expect(music).toHaveAttribute('aria-pressed', 'true');
+
+    await music.click();
+    await expect(music).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(async () => (await readSave(page)).musicOn).toBe(false);
+
+    await page.reload();
+    await page.getByRole('button', { name: /Market/ }).click();
+    await expect(page.locator('#musicToggleBtn')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('the volume slider stores its value and unmutes', async ({ page }) => {
+    await load(page, makeSave({ muted: true, volume: 0.7 }));
+    await page.getByRole('button', { name: /Market/ }).click();
+
+    // Muted reads as 0% regardless of the stored level.
+    await expect(page.locator('#volumeReadout')).toHaveText('0%');
+
+    await page.locator('#volumeSlider').fill('40');
+    await expect(page.locator('#volumeReadout')).toHaveText('40%');
+
+    const saved = await readSave(page);
+    expect(saved.volume).toBeCloseTo(0.4, 5);
+    expect(saved.muted).toBe(false);
+  });
+
+  test('the topbar mute button and the volume readout agree', async ({ page }) => {
+    await load(page, makeSave({ muted: false, volume: 1 }));
+    await page.getByRole('button', { name: /Market/ }).click();
+    await expect(page.locator('#volumeReadout')).toHaveText('100%');
+
+    await page.locator('#muteBtn').click();
+    await expect(page.locator('#volumeReadout')).toHaveText('0%');
   });
 });
 
