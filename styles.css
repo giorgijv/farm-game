@@ -372,6 +372,60 @@ html, body {
   cursor: not-allowed;
 }
 
+/* --- Achievements tab --- */
+
+#achievementsProgress {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent-dark);
+}
+
+.achievements-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.achievement-card {
+  background: var(--panel);
+  border: 2px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 12px;
+  text-align: center;
+  opacity: 0.6;
+}
+
+.achievement-card.unlocked {
+  opacity: 1;
+  border-color: var(--good);
+  box-shadow: 0 0 0 1px var(--good) inset;
+}
+
+.achievement-emoji {
+  font-size: 1.8rem;
+}
+
+.achievement-name {
+  font-weight: 700;
+  margin: 4px 0 2px;
+}
+
+.achievement-desc {
+  font-size: 0.8rem;
+  color: rgba(59,42,26,0.75);
+  margin-bottom: 6px;
+}
+
+.achievement-reward {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-dark);
+}
+
+.achievement-card.unlocked .achievement-reward {
+  color: var(--good);
+}
+
 .site-footer {
   text-align: center;
   margin-top: 20px;
@@ -407,5 +461,14 @@ html, body {
 @media (max-width: 480px) {
   .plots-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .tabbar {
+    flex-wrap: wrap;
+  }
+
+  .tab-btn {
+    flex: 1 1 calc(50% - 8px);
+    font-size: 0.9rem;
   }
 }

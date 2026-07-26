@@ -51,6 +51,64 @@ const GOODS = {
   wool: { emoji: '🧶', name: 'Wool', sellPrice: 14 },
 };
 
+const ACHIEVEMENTS = [
+  {
+    id: 'first_harvest', emoji: '🌱', name: 'First Harvest', reward: 10,
+    description: 'Harvest a crop for the first time.',
+    check: (s) => s.stats.totalHarvested >= 1,
+  },
+  {
+    id: 'green_thumb', emoji: '🌾', name: 'Green Thumb', reward: 50,
+    description: 'Harvest 50 crops in total.',
+    check: (s) => s.stats.totalHarvested >= 50,
+  },
+  {
+    id: 'master_farmer', emoji: '🚜', name: 'Master Farmer', reward: 150,
+    description: 'Harvest 200 crops in total.',
+    check: (s) => s.stats.totalHarvested >= 200,
+  },
+  {
+    id: 'rancher', emoji: '🐄', name: 'Rancher', reward: 60,
+    description: 'Own 3 cows.',
+    check: (s) => s.cows.length >= 3,
+  },
+  {
+    id: 'poultry_farmer', emoji: '🐔', name: 'Poultry Farmer', reward: 60,
+    description: 'Own 5 chickens.',
+    check: (s) => s.chickens.length >= 5,
+  },
+  {
+    id: 'shepherd', emoji: '🐑', name: 'Shepherd', reward: 60,
+    description: 'Own 3 sheep.',
+    check: (s) => s.sheep.length >= 3,
+  },
+  {
+    id: 'full_barn', emoji: '🧺', name: 'Full Barn', reward: 40,
+    description: 'Own at least one cow, chicken, and sheep.',
+    check: (s) => ANIMAL_ORDER.every((kind) => s[ANIMALS[kind].stateKey].length >= 1),
+  },
+  {
+    id: 'full_house', emoji: '🔓', name: 'Full House', reward: 100,
+    description: 'Unlock every plot.',
+    check: (s) => s.unlockedPlots >= PLOT_COUNT,
+  },
+  {
+    id: 'wealthy_farmer', emoji: '💰', name: 'Wealthy Farmer', reward: 100,
+    description: 'Hold 1000 coins at once.',
+    check: (s) => s.coins >= 1000,
+  },
+  {
+    id: 'week_one', emoji: '📅', name: 'Week One', reward: 80,
+    description: 'Survive to Day 7.',
+    check: (s) => s.day >= 7,
+  },
+  {
+    id: 'big_business', emoji: '🛒', name: 'Big Business', reward: 70,
+    description: 'Earn 500 coins from selling goods.',
+    check: (s) => s.stats.totalCoinsEarned >= 500,
+  },
+];
+
 /* ------------------------------------------------------------------ */
 /* State                                                               */
 /* ------------------------------------------------------------------ */
@@ -68,6 +126,8 @@ function freshState() {
     sheep: [],
     nextAnimalId: 1,
     inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
+    stats: { totalHarvested: 0, totalCoinsEarned: 0 },
+    unlockedAchievements: [],
   };
 }
 
@@ -141,6 +201,7 @@ function setActiveTab(tab) {
   document.getElementById('farmTab').classList.toggle('hidden', tab !== 'farm');
   document.getElementById('animalsTab').classList.toggle('hidden', tab !== 'animals');
   document.getElementById('marketTab').classList.toggle('hidden', tab !== 'market');
+  document.getElementById('achievementsTab').classList.toggle('hidden', tab !== 'achievements');
   render();
 }
 
@@ -262,6 +323,7 @@ function harvestPlot(idx) {
   const elapsed = nowSec() - plot.plantedAt;
   if (elapsed < crop.growTime) return;
   state.inventory[plot.crop] += crop.yield;
+  state.stats.totalHarvested += crop.yield;
   showToast(`Harvested ${crop.yield}x ${crop.emoji} ${crop.name}`);
   plot.crop = null;
   plot.plantedAt = null;
@@ -476,6 +538,7 @@ function sellAll(key) {
   const good = GOODS[key];
   const earned = qty * good.sellPrice;
   state.coins += earned;
+  state.stats.totalCoinsEarned += earned;
   state.inventory[key] = 0;
   showToast(`Sold ${qty}x ${good.emoji} for ${earned}💰`);
   saveState();
@@ -528,10 +591,46 @@ function updateDay() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Achievements tab                                                      */
+/* ------------------------------------------------------------------ */
+
+function checkAchievements() {
+  ACHIEVEMENTS.forEach((ach) => {
+    if (state.unlockedAchievements.includes(ach.id)) return;
+    if (!ach.check(state)) return;
+    state.unlockedAchievements.push(ach.id);
+    state.coins += ach.reward;
+    showToast(`🏆 ${ach.name} unlocked! +${ach.reward}💰`);
+    saveState();
+  });
+}
+
+function renderAchievements() {
+  const list = document.getElementById('achievementsList');
+  list.innerHTML = '';
+  ACHIEVEMENTS.forEach((ach) => {
+    const unlocked = state.unlockedAchievements.includes(ach.id);
+    const card = document.createElement('div');
+    card.className = 'achievement-card' + (unlocked ? ' unlocked' : '');
+    card.innerHTML = `
+      <div class="achievement-emoji">${unlocked ? ach.emoji : '🔒'}</div>
+      <div class="achievement-name">${ach.name}</div>
+      <div class="achievement-desc">${ach.description}</div>
+      <div class="achievement-reward">${unlocked ? 'Earned' : 'Reward'}: ${ach.reward}💰</div>
+    `;
+    list.appendChild(card);
+  });
+
+  const progress = document.getElementById('achievementsProgress');
+  progress.textContent = `${state.unlockedAchievements.length} / ${ACHIEVEMENTS.length} unlocked`;
+}
+
+/* ------------------------------------------------------------------ */
 /* Render / loop                                                        */
 /* ------------------------------------------------------------------ */
 
 function render() {
+  checkAchievements();
   renderTopbar();
   if (activeTab === 'farm') {
     renderSeedBar();
@@ -541,6 +640,8 @@ function render() {
     renderBuyButtons();
   } else if (activeTab === 'market') {
     renderMarket();
+  } else if (activeTab === 'achievements') {
+    renderAchievements();
   }
 }
 
