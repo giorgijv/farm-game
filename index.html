@@ -28,6 +28,10 @@
 
     <!-- FARM TAB -->
     <section id="farmTab" class="tab-screen">
+      <div class="onboarding-banner hidden" id="onboardingBanner">
+        🌱 Pick a seed above, then click an empty plot to plant it. Come back once it's grown to harvest!
+        <button id="onboardingDismissBtn">Got it!</button>
+      </div>
       <div class="seed-bar" id="seedBar"></div>
       <div class="plots-grid" id="plotsGrid"></div>
     </section>
@@ -57,6 +61,12 @@
       <div class="market-list" id="sellList"></div>
       <h2>Inventory</h2>
       <div class="inventory-list" id="inventoryList"></div>
+      <h2>Save Data</h2>
+      <div class="save-controls">
+        <button id="downloadSaveBtn">⬇️ Download Save</button>
+        <button id="loadSaveBtn">⬆️ Load Save</button>
+        <input type="file" id="loadSaveInput" accept="application/json" class="hidden">
+      </div>
     </section>
 
     <!-- ACHIEVEMENTS TAB -->

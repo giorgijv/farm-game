@@ -129,6 +129,7 @@ function freshState() {
     stats: { totalHarvested: 0, totalCoinsEarned: 0 },
     unlockedAchievements: [],
     muted: false,
+    onboarded: false,
   };
 }
 
@@ -625,6 +626,62 @@ function sellAll(key) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Onboarding                                                            */
+/* ------------------------------------------------------------------ */
+
+function dismissOnboarding() {
+  state.onboarded = true;
+  saveState();
+  render();
+}
+
+/* ------------------------------------------------------------------ */
+/* Save data export / import                                            */
+/* ------------------------------------------------------------------ */
+
+function downloadSave() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  link.href = url;
+  link.download = `farm-life-save-${dateStamp}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast('Save file downloaded');
+}
+
+function loadSaveFromFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(reader.result);
+    } catch (e) {
+      SFX.error();
+      showToast('That file is not a valid save.');
+      return;
+    }
+    if (typeof parsed !== 'object' || parsed === null || !Array.isArray(parsed.plots) || typeof parsed.coins !== 'number') {
+      SFX.error();
+      showToast('That file is not a valid Farm Life save.');
+      return;
+    }
+    if (!window.confirm('Loading this save will replace your current progress. Continue?')) {
+      return;
+    }
+    state = Object.assign(freshState(), parsed);
+    saveState();
+    SFX.buy();
+    showToast('Save loaded!');
+    render();
+  };
+  reader.readAsText(file);
+}
+
+/* ------------------------------------------------------------------ */
 /* Top bar / day-night cycle                                            */
 /* ------------------------------------------------------------------ */
 
@@ -721,6 +778,7 @@ function render() {
   checkAchievements();
   renderTopbar();
   if (activeTab === 'farm') {
+    document.getElementById('onboardingBanner').classList.toggle('hidden', state.onboarded);
     renderSeedBar();
     renderPlots();
   } else if (activeTab === 'animals') {
@@ -748,6 +806,15 @@ function init() {
     btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
   });
   document.getElementById('muteBtn').addEventListener('click', toggleMute);
+  document.getElementById('onboardingDismissBtn').addEventListener('click', dismissOnboarding);
+
+  document.getElementById('downloadSaveBtn').addEventListener('click', downloadSave);
+  const loadInput = document.getElementById('loadSaveInput');
+  document.getElementById('loadSaveBtn').addEventListener('click', () => loadInput.click());
+  loadInput.addEventListener('change', () => {
+    if (loadInput.files.length > 0) loadSaveFromFile(loadInput.files[0]);
+    loadInput.value = '';
+  });
 
   updateDayNightVisuals();
   render();

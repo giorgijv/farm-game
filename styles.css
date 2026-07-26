@@ -136,6 +136,29 @@ html, body {
 
 /* --- Farm tab --- */
 
+.onboarding-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: #fff3d6;
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  font-size: 0.9rem;
+}
+
+.onboarding-banner button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .seed-bar {
   display: flex;
   gap: 10px;
@@ -380,6 +403,23 @@ html, body {
 .market-item button:disabled {
   background: #ccc;
   cursor: not-allowed;
+}
+
+.save-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.save-controls button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 2px solid var(--wood-dark);
+  background: var(--wood);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* --- Achievements tab --- */
