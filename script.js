@@ -4,9 +4,12 @@
 /* Config                                                              */
 /* ------------------------------------------------------------------ */
 
-const PLOT_COUNT = 12;
+const PLOT_COUNT = 16;
+const INITIAL_UNLOCKED_PLOTS = 8;
+const PLOT_UNLOCK_BASE_COST = 30;
+const PLOT_UNLOCK_INCREMENT = 25;
 const DAY_LENGTH_MS = 90 * 1000; // one in-game day
-const SAVE_KEY = 'farmLifeSave_v1';
+const SAVE_KEY = 'farmLifeSave_v2';
 
 const CROPS = {
   wheat: { name: 'Wheat', emoji: '🌾', seedCost: 5, growTime: 15, yield: 3, sellPrice: 3 },
@@ -47,6 +50,7 @@ function freshState() {
     day: 1,
     dayStartedAt: Date.now(),
     selectedSeed: null,
+    unlockedPlots: INITIAL_UNLOCKED_PLOTS,
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null, plantedAt: null })),
     cows: [],
     chickens: [],
@@ -149,6 +153,24 @@ function renderSeedBar() {
   });
 }
 
+function plotUnlockCost() {
+  return PLOT_UNLOCK_BASE_COST + (state.unlockedPlots - INITIAL_UNLOCKED_PLOTS) * PLOT_UNLOCK_INCREMENT;
+}
+
+function unlockPlot() {
+  if (state.unlockedPlots >= PLOT_COUNT) return;
+  const cost = plotUnlockCost();
+  if (state.coins < cost) {
+    showToast('Not enough coins!');
+    return;
+  }
+  state.coins -= cost;
+  state.unlockedPlots += 1;
+  showToast('New plot unlocked!');
+  saveState();
+  render();
+}
+
 function renderPlots() {
   const grid = document.getElementById('plotsGrid');
   grid.innerHTML = '';
@@ -156,7 +178,18 @@ function renderPlots() {
     const cell = document.createElement('div');
     cell.className = 'plot';
 
-    if (!plot.crop) {
+    if (idx >= state.unlockedPlots) {
+      cell.classList.add('locked');
+      const cost = PLOT_UNLOCK_BASE_COST + (idx - INITIAL_UNLOCKED_PLOTS) * PLOT_UNLOCK_INCREMENT;
+      cell.innerHTML = `<span>🔒</span><span class="plot-lock-cost">${cost}💰</span>`;
+      if (idx === state.unlockedPlots) {
+        cell.classList.add('unlockable');
+        cell.title = `Unlock this plot for ${cost}💰`;
+        cell.addEventListener('click', () => unlockPlot());
+      } else {
+        cell.title = 'Unlock the previous plot first';
+      }
+    } else if (!plot.crop) {
       cell.classList.add('empty');
       cell.textContent = '➕';
       cell.title = 'Plant a seed here';
@@ -389,7 +422,8 @@ function renderMarket() {
     { emoji: '💰', name: 'Coins', value: state.coins },
     { emoji: '🐄', name: 'Cows', value: state.cows.length },
     { emoji: '🐔', name: 'Chickens', value: state.chickens.length },
-    { emoji: '🌱', name: 'Plots planted', value: state.plots.filter((p) => p.crop).length + ' / ' + PLOT_COUNT },
+    { emoji: '🌱', name: 'Plots planted', value: state.plots.filter((p) => p.crop).length + ' / ' + state.unlockedPlots },
+    { emoji: '🔓', name: 'Plots unlocked', value: state.unlockedPlots + ' / ' + PLOT_COUNT },
   ];
   overview.forEach((o) => {
     const item = document.createElement('div');

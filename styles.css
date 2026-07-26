@@ -178,6 +178,25 @@ html, body {
   animation: pulse 1s infinite;
 }
 
+.plot.locked {
+  background: #4a3320;
+  border-style: dashed;
+  cursor: not-allowed;
+  font-size: 1.6rem;
+  color: rgba(255,255,255,0.6);
+}
+
+.plot.locked.unlockable {
+  cursor: pointer;
+  color: rgba(255,255,255,0.9);
+  border-color: var(--accent);
+}
+
+.plot-lock-cost {
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(255,179,71,0.6); }
   50% { box-shadow: 0 0 0 8px rgba(255,179,71,0); }
