@@ -1560,6 +1560,11 @@ body {
   margin-top: 2px;
 }
 
+/* Keep neighbouring game links from reading as one run of text. */
+.footer-line a + a {
+  margin-left: 10px;
+}
+
 .site-footer a {
   color: #ffe9a8;
   font-weight: 800;
