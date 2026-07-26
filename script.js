@@ -128,6 +128,7 @@ function freshState() {
     inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
     stats: { totalHarvested: 0, totalCoinsEarned: 0 },
     unlockedAchievements: [],
+    muted: false,
   };
 }
 
@@ -188,6 +189,70 @@ function pickCropToConsume(amount) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Sound effects (synthesized, no audio files)                          */
+/* ------------------------------------------------------------------ */
+
+let audioCtx = null;
+
+function getAudioCtx() {
+  if (!audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    audioCtx = new Ctx();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playTone(freq, duration, type, volume, delay) {
+  if (state.muted) return;
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const startAt = ctx.currentTime + (delay || 0);
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(volume, startAt);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startAt);
+  osc.stop(startAt + duration + 0.02);
+}
+
+const SFX = {
+  plant: () => playTone(440, 0.08, 'sine', 0.08),
+  harvest: () => {
+    playTone(660, 0.07, 'sine', 0.1);
+    playTone(880, 0.09, 'sine', 0.09, 0.06);
+  },
+  feed: () => playTone(300, 0.1, 'triangle', 0.08),
+  collect: () => {
+    playTone(523.25, 0.07, 'sine', 0.1);
+    playTone(659.25, 0.07, 'sine', 0.1, 0.07);
+    playTone(783.99, 0.1, 'sine', 0.1, 0.14);
+  },
+  buy: () => playTone(220, 0.12, 'sawtooth', 0.06),
+  sell: () => {
+    playTone(784, 0.06, 'sine', 0.09);
+    playTone(988, 0.09, 'sine', 0.09, 0.05);
+  },
+  unlockPlot: () => {
+    playTone(392, 0.08, 'square', 0.07);
+    playTone(523.25, 0.1, 'square', 0.07, 0.08);
+  },
+  error: () => playTone(140, 0.15, 'sawtooth', 0.07),
+  achievement: () => {
+    playTone(523.25, 0.1, 'sine', 0.12, 0);
+    playTone(659.25, 0.1, 'sine', 0.12, 0.1);
+    playTone(783.99, 0.1, 'sine', 0.12, 0.2);
+    playTone(1046.5, 0.22, 'sine', 0.14, 0.3);
+  },
+  click: () => playTone(600, 0.04, 'square', 0.04),
+};
+
+/* ------------------------------------------------------------------ */
 /* Tabs                                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -195,6 +260,7 @@ let activeTab = 'farm';
 
 function setActiveTab(tab) {
   activeTab = tab;
+  SFX.click();
   document.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
@@ -234,11 +300,13 @@ function unlockPlot() {
   if (state.unlockedPlots >= PLOT_COUNT) return;
   const cost = plotUnlockCost();
   if (state.coins < cost) {
+    SFX.error();
     showToast('Not enough coins!');
     return;
   }
   state.coins -= cost;
   state.unlockedPlots += 1;
+  SFX.unlockPlot();
   showToast('New plot unlocked!');
   saveState();
   render();
@@ -301,17 +369,20 @@ function plantSeed(idx) {
   const plot = state.plots[idx];
   if (plot.crop) return;
   if (!state.selectedSeed) {
+    SFX.error();
     showToast('Pick a seed first!');
     return;
   }
   const crop = CROPS[state.selectedSeed];
   if (state.coins < crop.seedCost) {
+    SFX.error();
     showToast('Not enough coins!');
     return;
   }
   state.coins -= crop.seedCost;
   plot.crop = state.selectedSeed;
   plot.plantedAt = nowSec();
+  SFX.plant();
   saveState();
   render();
 }
@@ -324,6 +395,7 @@ function harvestPlot(idx) {
   if (elapsed < crop.growTime) return;
   state.inventory[plot.crop] += crop.yield;
   state.stats.totalHarvested += crop.yield;
+  SFX.harvest();
   showToast(`Harvested ${crop.yield}x ${crop.emoji} ${crop.name}`);
   plot.crop = null;
   plot.plantedAt = null;
@@ -421,12 +493,14 @@ function feedAnimal(kind, id) {
   if (!animal || animal.state !== 'hungry') return;
   const plan = pickCropToConsume(def.feedAmount);
   if (!plan) {
+    SFX.error();
     showToast('Not enough crops to feed!');
     return;
   }
   Object.entries(plan).forEach(([k, amt]) => { state.inventory[k] -= amt; });
   animal.state = 'producing';
   animal.feedAt = nowSec();
+  SFX.feed();
   saveState();
   render();
 }
@@ -438,6 +512,7 @@ function collectAnimal(kind, id) {
   const progress = (nowSec() - animal.feedAt) / def.produceTime;
   if (progress < 1) return;
   state.inventory[def.produceKey] += def.produceYield;
+  SFX.collect();
   showToast(`Collected ${def.produceYield}x ${def.produceEmoji}`);
   animal.state = 'hungry';
   animal.feedAt = null;
@@ -453,6 +528,7 @@ function sellAnimal(kind, id) {
   const refund = Math.round(def.buyBaseCost * ANIMAL_SELL_REFUND_RATE);
   list.splice(idx, 1);
   state.coins += refund;
+  SFX.sell();
   showToast(`Sold ${def.name} for ${refund}💰`);
   saveState();
   render();
@@ -479,11 +555,13 @@ function buyAnimal(kind) {
   const def = ANIMALS[kind];
   const cost = buyAnimalCost(kind);
   if (state.coins < cost) {
+    SFX.error();
     showToast('Not enough coins!');
     return;
   }
   state.coins -= cost;
   state[def.stateKey].push({ id: state.nextAnimalId++, state: 'hungry', feedAt: null });
+  SFX.buy();
   showToast(`Bought a new ${def.name}!`);
   saveState();
   render();
@@ -540,6 +618,7 @@ function sellAll(key) {
   state.coins += earned;
   state.stats.totalCoinsEarned += earned;
   state.inventory[key] = 0;
+  SFX.sell();
   showToast(`Sold ${qty}x ${good.emoji} for ${earned}💰`);
   saveState();
   render();
@@ -579,6 +658,14 @@ function renderTopbar() {
   document.getElementById('coinsLabel').textContent = `💰 ${state.coins}`;
   const isNight = currentNightFactor > 0.5;
   document.getElementById('dayLabel').textContent = `${isNight ? '🌙 Night' : '☀️ Day'} ${state.day}`;
+  document.getElementById('muteBtn').textContent = state.muted ? '🔇' : '🔊';
+}
+
+function toggleMute() {
+  state.muted = !state.muted;
+  saveState();
+  render();
+  SFX.click();
 }
 
 function updateDay() {
@@ -600,6 +687,7 @@ function checkAchievements() {
     if (!ach.check(state)) return;
     state.unlockedAchievements.push(ach.id);
     state.coins += ach.reward;
+    SFX.achievement();
     showToast(`🏆 ${ach.name} unlocked! +${ach.reward}💰`);
     saveState();
   });
@@ -659,6 +747,7 @@ function init() {
   document.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
   });
+  document.getElementById('muteBtn').addEventListener('click', toggleMute);
 
   updateDayNightVisuals();
   render();
