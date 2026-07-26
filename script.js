@@ -15,9 +15,10 @@ const CROPS = {
   wheat: { name: 'Wheat', emoji: '🌾', seedCost: 5, growTime: 15, yield: 3, sellPrice: 3 },
   corn: { name: 'Corn', emoji: '🌽', seedCost: 12, growTime: 30, yield: 3, sellPrice: 6 },
   carrot: { name: 'Carrot', emoji: '🥕', seedCost: 20, growTime: 50, yield: 3, sellPrice: 10 },
+  pumpkin: { name: 'Pumpkin', emoji: '🎃', seedCost: 35, growTime: 70, yield: 3, sellPrice: 16 },
 };
 
-const CROP_ORDER = ['wheat', 'corn', 'carrot'];
+const CROP_ORDER = ['wheat', 'corn', 'carrot', 'pumpkin'];
 
 const ANIMALS = {
   cow: {
@@ -44,6 +45,7 @@ const GOODS = {
   wheat: { emoji: '🌾', name: 'Wheat', sellPrice: CROPS.wheat.sellPrice },
   corn: { emoji: '🌽', name: 'Corn', sellPrice: CROPS.corn.sellPrice },
   carrot: { emoji: '🥕', name: 'Carrot', sellPrice: CROPS.carrot.sellPrice },
+  pumpkin: { emoji: '🎃', name: 'Pumpkin', sellPrice: CROPS.pumpkin.sellPrice },
   milk: { emoji: '🥛', name: 'Milk', sellPrice: 9 },
   egg: { emoji: '🥚', name: 'Egg', sellPrice: 5 },
   wool: { emoji: '🧶', name: 'Wool', sellPrice: 14 },
@@ -65,7 +67,7 @@ function freshState() {
     chickens: [],
     sheep: [],
     nextAnimalId: 1,
-    inventory: { wheat: 0, corn: 0, carrot: 0, milk: 0, egg: 0, wool: 0 },
+    inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
   };
 }
 
@@ -481,12 +483,39 @@ function sellAll(key) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Top bar / day cycle                                                  */
+/* Top bar / day-night cycle                                            */
 /* ------------------------------------------------------------------ */
+
+const SKY_COLORS = {
+  day: { top: [143, 211, 244], bottom: [161, 227, 161], ground: [205, 238, 203] },
+  night: { top: [11, 21, 51], bottom: [27, 42, 74], ground: [39, 64, 35] },
+};
+
+let currentNightFactor = 0;
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function lerpColor(c1, c2, t) {
+  return `rgb(${Math.round(lerp(c1[0], c2[0], t))}, ${Math.round(lerp(c1[1], c2[1], t))}, ${Math.round(lerp(c1[2], c2[2], t))})`;
+}
+
+function updateDayNightVisuals() {
+  const phase = ((Date.now() - state.dayStartedAt) / DAY_LENGTH_MS) % 1;
+  // Smooth sinusoid: 0 at dawn/dusk boundary, peaks at 1 in the middle of the cycle (night).
+  const nightFactor = (1 - Math.cos(2 * Math.PI * phase)) / 2;
+  const root = document.documentElement.style;
+  root.setProperty('--sky-top', lerpColor(SKY_COLORS.day.top, SKY_COLORS.night.top, nightFactor));
+  root.setProperty('--sky-bottom', lerpColor(SKY_COLORS.day.bottom, SKY_COLORS.night.bottom, nightFactor));
+  root.setProperty('--sky-ground', lerpColor(SKY_COLORS.day.ground, SKY_COLORS.night.ground, nightFactor));
+  currentNightFactor = nightFactor;
+}
 
 function renderTopbar() {
   document.getElementById('coinsLabel').textContent = `💰 ${state.coins}`;
-  document.getElementById('dayLabel').textContent = `☀️ Day ${state.day}`;
+  const isNight = currentNightFactor > 0.5;
+  document.getElementById('dayLabel').textContent = `${isNight ? '🌙 Night' : '☀️ Day'} ${state.day}`;
 }
 
 function updateDay() {
@@ -495,6 +524,7 @@ function updateDay() {
     state.day += 1;
     state.dayStartedAt = Date.now();
   }
+  updateDayNightVisuals();
 }
 
 /* ------------------------------------------------------------------ */
@@ -529,6 +559,7 @@ function init() {
     btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
   });
 
+  updateDayNightVisuals();
   render();
   setInterval(tick, 1000);
 }
