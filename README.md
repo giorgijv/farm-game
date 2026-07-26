@@ -44,12 +44,18 @@ Progress saves automatically to `localStorage`. Because that is per-browser,
 the Market tab also offers **Download Save** / **Load Save** to back progress
 up or move it between devices.
 
-## Install and offline play
+## On a phone
 
-The game ships a web app manifest and a service worker that precaches the
-whole app shell, so it can be installed to a home screen and played with no
-network connection. As usual for service workers, the first visit runs from
-the network and the offline cache takes effect from the next load onwards.
+The game is built to be played on a phone. Open the link in Chrome on Android
+and use **Add to Home screen** — the manifest and service worker make it launch
+full-screen and run with no network connection. (As usual for service workers,
+the first visit loads from the network and the offline cache takes effect from
+the next load onwards.)
+
+Every control is sized to Material's 48dp touch target, the layout reflows from
+a three-column field in portrait to six columns in landscape, hover effects are
+suppressed on touch so they cannot stick after a tap, and padding respects
+display cutouts and the gesture bar when running full-screen.
 
 ## Accessibility
 
@@ -80,11 +86,15 @@ npx playwright install chromium   # first run only
 npm test
 ```
 
-The suite covers the core loop, animal production, the market, achievements,
-the day cycle, save loading/migration, the welcome-back summary, keyboard
-operability, and offline play. It also asserts that the once-a-second render
-reuses DOM nodes, since rebuilding them would silently restart every CSS
-animation.
+`tests/game.spec.js` covers the core loop, animal production, the market,
+upgrades, achievements, the day cycle, save loading/migration, the welcome-back
+summary, keyboard operability, and offline play. It also asserts that the
+once-a-second render reuses DOM nodes, since rebuilding them would silently
+restart every CSS animation.
+
+`tests/mobile.spec.js` runs the game at phone sizes — 360px, 393px and
+landscape — checking that nothing scrolls sideways, that no control falls below
+the 44px touch floor, and that the whole loop can be played by tapping.
 
 If you are running in a sandbox that already ships a Chromium whose build
 number does not match this Playwright version, point the tests at it:

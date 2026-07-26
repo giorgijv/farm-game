@@ -89,6 +89,12 @@ body {
   transition: --sky-top 1.5s linear, --sky-bottom 1.5s linear, --sky-ground 1.5s linear;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
+  /* Stop an over-eager downward swipe near the top of the farm from
+     triggering Android Chrome's pull-to-refresh mid-game. */
+  overscroll-behavior-y: contain;
+  /* Keep label sizes stable when an Android phone is rotated. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 .hidden {
@@ -297,7 +303,12 @@ body {
   z-index: 1;
   max-width: 940px;
   margin: 0 auto;
-  padding: calc(var(--sky-band) + 6px) 16px 48px;
+  /* Keep clear of notches, punch-holes and the gesture bar — these matter
+     most when the game is installed and runs without browser chrome. */
+  padding-top: calc(var(--sky-band) + 6px + env(safe-area-inset-top));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: calc(48px + env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
   min-height: 100vh;
 }
 
@@ -464,8 +475,10 @@ body {
   transition: transform 0.09s ease, box-shadow 0.09s ease, background 0.18s ease;
 }
 
-.tab-btn:hover {
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .tab-btn:hover {
+    transform: translateY(-1px);
+  }
 }
 
 .tab-btn:active {
@@ -785,13 +798,15 @@ body {
   transition: transform 0.12s cubic-bezier(.34, 1.56, .64, 1), box-shadow 0.12s ease;
 }
 
-.plot:hover {
-  transform: translateY(-3px);
-  box-shadow:
-    inset 0 3px 0 rgba(255, 214, 160, 0.2),
-    inset 0 -10px 16px rgba(45, 24, 5, 0.45),
-    0 9px 0 var(--soil-deepest),
-    0 15px 22px rgba(38, 20, 4, 0.4);
+@media (hover: hover) {
+  .plot:hover {
+    transform: translateY(-3px);
+    box-shadow:
+      inset 0 3px 0 rgba(255, 214, 160, 0.2),
+      inset 0 -10px 16px rgba(45, 24, 5, 0.45),
+      0 9px 0 var(--soil-deepest),
+      0 15px 22px rgba(38, 20, 4, 0.4);
+  }
 }
 
 .plot:active {
@@ -930,8 +945,10 @@ body {
     0 9px 14px rgba(30, 16, 3, 0.32);
 }
 
-.plot.locked:hover {
-  transform: none;
+@media (hover: hover) {
+  .plot.locked:hover {
+    transform: none;
+  }
 }
 
 .plot.locked.unlockable {
@@ -946,8 +963,10 @@ body {
   animation: unlockPulse 1.9s ease-in-out infinite;
 }
 
-.plot.locked.unlockable:hover {
-  transform: translateY(-3px);
+@media (hover: hover) {
+  .plot.locked.unlockable:hover {
+    transform: translateY(-3px);
+  }
 }
 
 @keyframes unlockPulse {
@@ -1454,7 +1473,7 @@ body {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 26px;
+  bottom: calc(26px + env(safe-area-inset-bottom));
   z-index: 40;
   transform: translateX(-50%);
   padding: 11px 22px;
@@ -1517,11 +1536,13 @@ body {
    ================================================================== */
 
 .site-footer {
-  display: inline-block;
-  margin: 22px 50% 0;
-  transform: translateX(-50%);
+  /* fit-content + auto margins centres the pill without the 50% margin trick,
+     which pushed the layout viewport far past the screen in landscape. */
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 22px auto 0;
   padding: 7px 18px;
-  white-space: nowrap;
   text-align: center;
   font-size: 0.85rem;
   font-weight: 600;
@@ -1534,15 +1555,6 @@ body {
 .site-footer a {
   color: #ffe9a8;
   font-weight: 800;
-}
-
-@media (max-width: 560px) {
-  .site-footer {
-    white-space: normal;
-    display: block;
-    margin: 22px 0 0;
-    transform: none;
-  }
 }
 
 /* ==================================================================
@@ -1561,7 +1573,12 @@ body {
     --celestial-size: 38px;
   }
 
-  #app { padding: calc(var(--sky-band) + 4px) 11px 40px; }
+  #app {
+    padding-top: calc(var(--sky-band) + 4px + env(safe-area-inset-top));
+    padding-right: max(11px, env(safe-area-inset-right));
+    padding-bottom: calc(40px + env(safe-area-inset-bottom));
+    padding-left: max(11px, env(safe-area-inset-left));
+  }
 
   .plots-grid {
     grid-template-columns: repeat(3, 1fr);
@@ -1569,6 +1586,19 @@ body {
   }
 
   .plot { font-size: 1.75rem; }
+
+  /* Share the row evenly so all four seeds fit on one line; wrapping to a
+     second row pushed the plots most of a screen further down. */
+  .seed-bar { gap: 7px; }
+
+  .seed-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 8px 4px 7px;
+    font-size: 0.72rem;
+  }
+
+  .seed-btn .seed-emoji { font-size: 1.35rem; }
 
   .tabbar {
     flex-wrap: wrap;
@@ -1587,6 +1617,98 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
     gap: 9px;
   }
+
+  .upgrade-list {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 9px;
+  }
+
+  /* Keep the cost on one line inside a half-width card. */
+  .upgrade-item button {
+    font-size: 0.74rem;
+    padding: 8px 3px;
+  }
+
+  .upgrade-item { font-size: 0.79rem; }
+  .upgrade-name { font-size: 0.88rem; }
+
+  .volume-control input[type="range"] { width: 120px; }
+}
+
+/* ==================================================================
+   Touch devices (Android phones and tablets)
+   ================================================================== */
+
+@media (pointer: coarse) {
+  /* Material's 48dp minimum. Everything the player taps repeatedly needs to
+     be comfortably hittable with a thumb. */
+  .tab-btn,
+  .seed-btn,
+  .animal-btn,
+  .buy-animal-btn,
+  .market-item button,
+  .upgrade-item button,
+  .sound-controls button,
+  .save-controls button,
+  .onboarding-banner button,
+  .welcome-banner button {
+    min-height: 48px;
+  }
+
+  /* Kept visibly smaller than Feed so selling stays the harder tap of the
+     two, but still above the 44px accessibility floor. */
+  .animal-btn-sell {
+    min-height: 44px;
+  }
+
+  .mute-btn {
+    width: 48px;
+    height: 48px;
+    font-size: 1.15rem;
+  }
+
+  /* The native range track is only ~16px tall; pad out the grab area. */
+  .volume-control input[type="range"] {
+    height: 44px;
+  }
+
+  .site-footer a {
+    display: inline-block;
+    padding: 14px 4px;
+  }
+
+  /* Our own :active styles stand in for the grey Android tap flash, and
+     manipulation removes the double-tap-to-zoom delay on controls. */
+  button,
+  input[type="range"],
+  .plot {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  /* Long-pressing a control should not select its label or raise a callout. */
+  button {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
+
+/* Short viewports — mostly phones held in landscape. Reclaim the vertical
+   space the sky strip and top bar would otherwise eat. */
+@media (max-height: 480px) and (orientation: landscape) {
+  :root {
+    --sky-band: 40px;
+    --celestial-size: 28px;
+  }
+
+  #app { padding-top: calc(var(--sky-band) + 4px); }
+  .topbar { padding: 7px 12px; }
+  .logo { font-size: 1.05rem; }
+  .logo-icon { display: none; }
+  .tabbar { margin: 9px 0; }
+  .tab-screen { padding: 12px; }
+  .plots-grid { grid-template-columns: repeat(6, 1fr); }
 }
 
 /* Respect users who prefer less motion: keep state, drop the movement. */
