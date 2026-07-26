@@ -133,13 +133,89 @@ function freshState() {
   };
 }
 
+// Older save slots, newest first. Kept so bumping SAVE_KEY upgrades a player's
+// farm instead of silently starting them over.
+const LEGACY_SAVE_KEYS = ['farmLifeSave_v1'];
+
+// Folds an arbitrary parsed save onto the current shape. A plain
+// Object.assign is not enough: it replaces whole sub-objects, so a save
+// written before pumpkins or wool existed would leave those counts undefined
+// and turn every later addition into NaN.
+function migrateSave(parsed) {
+  if (!parsed || typeof parsed !== 'object') return freshState();
+  const merged = Object.assign(freshState(), parsed);
+
+  merged.inventory = Object.assign(freshState().inventory, parsed.inventory || {});
+  merged.stats = Object.assign(freshState().stats, parsed.stats || {});
+  Object.keys(merged.inventory).forEach((k) => {
+    if (!Number.isFinite(merged.inventory[k])) merged.inventory[k] = 0;
+  });
+  Object.keys(merged.stats).forEach((k) => {
+    if (!Number.isFinite(merged.stats[k])) merged.stats[k] = 0;
+  });
+
+  if (!Number.isFinite(merged.coins)) merged.coins = 0;
+  if (!Number.isFinite(merged.day) || merged.day < 1) merged.day = 1;
+  if (!Number.isFinite(merged.dayStartedAt)) merged.dayStartedAt = Date.now();
+
+  // Saves from before plot unlocking have no unlockedPlots and a shorter grid.
+  if (!Number.isFinite(merged.unlockedPlots)) merged.unlockedPlots = INITIAL_UNLOCKED_PLOTS;
+  merged.unlockedPlots = Math.min(Math.max(Math.floor(merged.unlockedPlots), 1), PLOT_COUNT);
+
+  const plots = Array.isArray(parsed.plots) ? parsed.plots.slice(0, PLOT_COUNT) : [];
+  while (plots.length < PLOT_COUNT) plots.push({ crop: null, plantedAt: null });
+  merged.plots = plots.map((p) => {
+    if (!p || typeof p !== 'object') return { crop: null, plantedAt: null };
+    // Drop anything planted with a crop this build no longer defines.
+    if (p.crop && !CROPS[p.crop]) return { crop: null, plantedAt: null };
+    if (p.crop && !Number.isFinite(p.plantedAt)) return { crop: null, plantedAt: null };
+    return { crop: p.crop ?? null, plantedAt: p.plantedAt ?? null };
+  });
+
+  ANIMAL_ORDER.forEach((kind) => {
+    const key = ANIMALS[kind].stateKey;
+    const list = Array.isArray(merged[key]) ? merged[key] : [];
+    merged[key] = list
+      .filter((a) => a && typeof a === 'object')
+      .map((a) => ({
+        id: Number.isFinite(a.id) ? a.id : 0,
+        state: a.state === 'producing' ? 'producing' : 'hungry',
+        feedAt: Number.isFinite(a.feedAt) ? a.feedAt : null,
+      }))
+      // A producing animal with no feed time would never finish.
+      .map((a) => (a.state === 'producing' && a.feedAt === null ? { ...a, state: 'hungry' } : a));
+  });
+
+  // Re-issue ids so a save with missing or duplicated ones can't collide.
+  let nextId = 1;
+  ANIMAL_ORDER.forEach((kind) => {
+    merged[ANIMALS[kind].stateKey].forEach((a) => { a.id = nextId++; });
+  });
+  merged.nextAnimalId = nextId;
+
+  const knownAchievements = new Set(ACHIEVEMENTS.map((a) => a.id));
+  merged.unlockedAchievements = Array.isArray(parsed.unlockedAchievements)
+    ? [...new Set(parsed.unlockedAchievements.filter((id) => knownAchievements.has(id)))]
+    : [];
+
+  if (merged.selectedSeed && !CROPS[merged.selectedSeed]) merged.selectedSeed = null;
+  merged.muted = Boolean(merged.muted);
+  merged.onboarded = Boolean(merged.onboarded);
+
+  return merged;
+}
+
 function loadState() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    let raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) {
+      for (const key of LEGACY_SAVE_KEYS) {
+        const legacy = localStorage.getItem(key);
+        if (legacy) { raw = legacy; break; }
+      }
+    }
     if (!raw) return freshState();
-    const parsed = JSON.parse(raw);
-    const fresh = freshState();
-    return Object.assign(fresh, parsed);
+    return migrateSave(JSON.parse(raw));
   } catch (e) {
     return freshState();
   }
@@ -795,7 +871,7 @@ function loadSaveFromFile(file) {
     if (!window.confirm('Loading this save will replace your current progress. Continue?')) {
       return;
     }
-    state = Object.assign(freshState(), parsed);
+    state = migrateSave(parsed);
     saveState();
     SFX.buy();
     showToast('Save loaded!');
@@ -835,7 +911,10 @@ function skyColorAt(band, nightFactor) {
 }
 
 function updateDayNightVisuals() {
-  const phase = ((Date.now() - state.dayStartedAt) / DAY_LENGTH_MS) % 1;
+  // Normalise into [0, 1) so a save from the future (clock change, edited
+  // file) can't push the sun off the side of the sky.
+  const rawPhase = (Date.now() - state.dayStartedAt) / DAY_LENGTH_MS;
+  const phase = ((rawPhase % 1) + 1) % 1;
   // Smooth sinusoid: 0 at midday, peaks at 1 in the middle of the cycle (midnight).
   const nightFactor = (1 - Math.cos(2 * Math.PI * phase)) / 2;
   const root = document.documentElement.style;
@@ -892,8 +971,14 @@ function toggleMute() {
 function updateDay() {
   const elapsed = Date.now() - state.dayStartedAt;
   if (elapsed >= DAY_LENGTH_MS) {
-    state.day += 1;
-    state.dayStartedAt = Date.now();
+    // Advance by every whole day that has passed, not just one. Crops and
+    // animals run off absolute timestamps and so catch up fully after the tab
+    // has been closed; the calendar has to catch up the same way. Carrying the
+    // remainder forward (rather than resetting to now) also keeps the
+    // day/night phase continuous instead of drifting on every rollover.
+    const daysPassed = Math.floor(elapsed / DAY_LENGTH_MS);
+    state.day += daysPassed;
+    state.dayStartedAt += daysPassed * DAY_LENGTH_MS;
   }
   updateDayNightVisuals();
 }
@@ -987,6 +1072,10 @@ function init() {
     if (loadInput.files.length > 0) loadSaveFromFile(loadInput.files[0]);
     loadInput.value = '';
   });
+
+  // Persist straight away rather than waiting for the first tick, so a
+  // migrated save is committed even if the player closes the tab immediately.
+  saveState();
 
   updateDayNightVisuals();
   render();

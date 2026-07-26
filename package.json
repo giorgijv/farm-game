@@ -1,0 +1,15 @@
+{
+  "name": "farm-life",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A browser farming game: plant and harvest crops, raise animals, sell goods at the market.",
+  "scripts": {
+    "serve": "node tests/server.js",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
