@@ -21,16 +21,24 @@ const CROP_ORDER = ['wheat', 'corn', 'carrot'];
 
 const ANIMALS = {
   cow: {
-    name: 'Cow', emoji: '🐄', buyBaseCost: 100, costIncrement: 70,
+    name: 'Cow', emoji: '🐄', stateKey: 'cows', buyBaseCost: 100, costIncrement: 70,
     feedAmount: 3, produceTime: 25, produceYield: 2,
     produceKey: 'milk', produceEmoji: '🥛',
   },
   chicken: {
-    name: 'Chicken', emoji: '🐔', buyBaseCost: 40, costIncrement: 25,
+    name: 'Chicken', emoji: '🐔', stateKey: 'chickens', buyBaseCost: 40, costIncrement: 25,
     feedAmount: 1, produceTime: 15, produceYield: 1,
     produceKey: 'egg', produceEmoji: '🥚',
   },
+  sheep: {
+    name: 'Sheep', pluralName: 'sheep', emoji: '🐑', stateKey: 'sheep', buyBaseCost: 150, costIncrement: 90,
+    feedAmount: 4, produceTime: 35, produceYield: 2,
+    produceKey: 'wool', produceEmoji: '🧶',
+  },
 };
+
+const ANIMAL_ORDER = ['cow', 'chicken', 'sheep'];
+const ANIMAL_SELL_REFUND_RATE = 0.5;
 
 const GOODS = {
   wheat: { emoji: '🌾', name: 'Wheat', sellPrice: CROPS.wheat.sellPrice },
@@ -38,6 +46,7 @@ const GOODS = {
   carrot: { emoji: '🥕', name: 'Carrot', sellPrice: CROPS.carrot.sellPrice },
   milk: { emoji: '🥛', name: 'Milk', sellPrice: 9 },
   egg: { emoji: '🥚', name: 'Egg', sellPrice: 5 },
+  wool: { emoji: '🧶', name: 'Wool', sellPrice: 14 },
 };
 
 /* ------------------------------------------------------------------ */
@@ -54,8 +63,9 @@ function freshState() {
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null, plantedAt: null })),
     cows: [],
     chickens: [],
+    sheep: [],
     nextAnimalId: 1,
-    inventory: { wheat: 0, corn: 0, carrot: 0, milk: 0, egg: 0 },
+    inventory: { wheat: 0, corn: 0, carrot: 0, milk: 0, egg: 0, wool: 0 },
   };
 }
 
@@ -263,13 +273,14 @@ function harvestPlot(idx) {
 
 function renderAnimalList(kind) {
   const def = ANIMALS[kind];
-  const list = state[kind + 's'];
+  const list = state[def.stateKey];
   const container = document.getElementById(kind + 'List');
   container.innerHTML = '';
 
   if (list.length === 0) {
     const empty = document.createElement('p');
-    empty.textContent = `No ${def.name.toLowerCase()}s yet — buy one below!`;
+    const plural = def.pluralName || `${def.name.toLowerCase()}s`;
+    empty.textContent = `No ${plural} yet — buy one below!`;
     container.appendChild(empty);
   }
 
@@ -316,16 +327,25 @@ function renderAnimalList(kind) {
     if (ready) {
       btn.textContent = `Collect ${def.produceEmoji}`;
       btn.addEventListener('click', () => collectAnimal(kind, animal.id));
+      card.appendChild(btn);
     } else if (animal.state === 'producing') {
       btn.textContent = 'Producing...';
       btn.disabled = true;
+      card.appendChild(btn);
     } else {
       const haveEnough = CROP_ORDER.reduce((sum, k) => sum + state.inventory[k], 0) >= def.feedAmount;
       btn.textContent = `Feed (${def.feedAmount} crops)`;
       btn.disabled = !haveEnough;
       btn.addEventListener('click', () => feedAnimal(kind, animal.id));
+      card.appendChild(btn);
+
+      const sellBtn = document.createElement('button');
+      sellBtn.className = 'animal-btn-sell';
+      const refund = Math.round(def.buyBaseCost * ANIMAL_SELL_REFUND_RATE);
+      sellBtn.textContent = `Sell (${refund}💰)`;
+      sellBtn.addEventListener('click', () => sellAnimal(kind, animal.id));
+      card.appendChild(sellBtn);
     }
-    card.appendChild(btn);
 
     container.appendChild(card);
   });
@@ -333,7 +353,7 @@ function renderAnimalList(kind) {
 
 function feedAnimal(kind, id) {
   const def = ANIMALS[kind];
-  const animal = state[kind + 's'].find((a) => a.id === id);
+  const animal = state[def.stateKey].find((a) => a.id === id);
   if (!animal || animal.state !== 'hungry') return;
   const plan = pickCropToConsume(def.feedAmount);
   if (!plan) {
@@ -349,7 +369,7 @@ function feedAnimal(kind, id) {
 
 function collectAnimal(kind, id) {
   const def = ANIMALS[kind];
-  const animal = state[kind + 's'].find((a) => a.id === id);
+  const animal = state[def.stateKey].find((a) => a.id === id);
   if (!animal || animal.state !== 'producing') return;
   const progress = (nowSec() - animal.feedAt) / def.produceTime;
   if (progress < 1) return;
@@ -361,14 +381,27 @@ function collectAnimal(kind, id) {
   render();
 }
 
+function sellAnimal(kind, id) {
+  const def = ANIMALS[kind];
+  const list = state[def.stateKey];
+  const idx = list.findIndex((a) => a.id === id);
+  if (idx === -1 || list[idx].state !== 'hungry') return;
+  const refund = Math.round(def.buyBaseCost * ANIMAL_SELL_REFUND_RATE);
+  list.splice(idx, 1);
+  state.coins += refund;
+  showToast(`Sold ${def.name} for ${refund}💰`);
+  saveState();
+  render();
+}
+
 function buyAnimalCost(kind) {
   const def = ANIMALS[kind];
-  const owned = state[kind + 's'].length;
+  const owned = state[def.stateKey].length;
   return def.buyBaseCost + owned * def.costIncrement;
 }
 
 function renderBuyButtons() {
-  ['cow', 'chicken'].forEach((kind) => {
+  ANIMAL_ORDER.forEach((kind) => {
     const def = ANIMALS[kind];
     const cost = buyAnimalCost(kind);
     const btn = document.getElementById('buy' + kind[0].toUpperCase() + kind.slice(1) + 'Btn');
@@ -379,14 +412,15 @@ function renderBuyButtons() {
 }
 
 function buyAnimal(kind) {
+  const def = ANIMALS[kind];
   const cost = buyAnimalCost(kind);
   if (state.coins < cost) {
     showToast('Not enough coins!');
     return;
   }
   state.coins -= cost;
-  state[kind + 's'].push({ id: state.nextAnimalId++, state: 'hungry', feedAt: null });
-  showToast(`Bought a new ${ANIMALS[kind].name}!`);
+  state[def.stateKey].push({ id: state.nextAnimalId++, state: 'hungry', feedAt: null });
+  showToast(`Bought a new ${def.name}!`);
   saveState();
   render();
 }
@@ -422,6 +456,7 @@ function renderMarket() {
     { emoji: '💰', name: 'Coins', value: state.coins },
     { emoji: '🐄', name: 'Cows', value: state.cows.length },
     { emoji: '🐔', name: 'Chickens', value: state.chickens.length },
+    { emoji: '🐑', name: 'Sheep', value: state.sheep.length },
     { emoji: '🌱', name: 'Plots planted', value: state.plots.filter((p) => p.crop).length + ' / ' + state.unlockedPlots },
     { emoji: '🔓', name: 'Plots unlocked', value: state.unlockedPlots + ' / ' + PLOT_COUNT },
   ];
@@ -472,8 +507,7 @@ function render() {
     renderSeedBar();
     renderPlots();
   } else if (activeTab === 'animals') {
-    renderAnimalList('cow');
-    renderAnimalList('chicken');
+    ANIMAL_ORDER.forEach((kind) => renderAnimalList(kind));
     renderBuyButtons();
   } else if (activeTab === 'market') {
     renderMarket();

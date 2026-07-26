@@ -286,6 +286,19 @@ html, body {
   cursor: not-allowed;
 }
 
+.animal-btn-sell {
+  width: 100%;
+  margin-top: 6px;
+  padding: 5px;
+  border-radius: 8px;
+  border: 1px solid var(--bad);
+  background: transparent;
+  color: var(--bad);
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
 .buy-animal-btn {
   padding: 10px 14px;
   border-radius: 10px;
