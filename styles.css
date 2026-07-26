@@ -126,7 +126,10 @@ body {
   overflow: hidden;
 }
 
-/* Starfield — fades in with the night factor. */
+/* Starfield — fades in with the night factor.
+   Split across two layers on purpose: .stars owns the night fade, while the
+   pseudo-element owns the twinkle. Animating opacity on a child composites,
+   whereas the old filter: brightness repainted a 62vh box every frame. */
 .stars {
   position: absolute;
   left: 0;
@@ -135,6 +138,12 @@ body {
   height: 62vh;
   opacity: var(--night, 0);
   transition: opacity 1.4s linear;
+}
+
+.stars::before {
+  content: '';
+  position: absolute;
+  inset: 0;
   background-image:
     radial-gradient(1.6px 1.6px at 8% 22%, #fff, transparent),
     radial-gradient(1.4px 1.4px at 17% 9%, #fff, transparent),
@@ -154,8 +163,8 @@ body {
 }
 
 @keyframes twinkle {
-  0%, 100% { filter: brightness(1); }
-  50%      { filter: brightness(0.62); }
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
 }
 
 /* Sun / moon. JS places it along an arc via inline left/top each tick. */
@@ -388,14 +397,14 @@ body {
   top: 0;
   bottom: 0;
   width: 40%;
-  left: -60%;
+  left: 0;
   background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.75), transparent);
   animation: shine 4.5s ease-in-out infinite;
 }
 
 @keyframes shine {
-  0%, 65%  { left: -60%; }
-  85%, 100% { left: 130%; }
+  0%, 65%   { transform: translateX(-160%); }
+  85%, 100% { transform: translateX(340%); }
 }
 
 /* Fires when the coin total changes. */
@@ -861,30 +870,33 @@ body {
       rgba(0, 0, 0, 0) 12px 16px),
     linear-gradient(180deg, #8f6033 0%, #77491f 58%, #5d3715 100%);
   border-color: var(--gold-dark);
-  animation: readyGlow 1.5s ease-in-out infinite;
+  box-shadow:
+    inset 0 3px 0 rgba(255, 224, 170, 0.2),
+    inset 0 -10px 16px rgba(45, 24, 5, 0.45),
+    0 6px 0 var(--soil-deepest),
+    0 11px 18px rgba(38, 20, 4, 0.35);
+}
+
+/* The ripe halo used to animate box-shadow, which repaints the tile every
+   frame — and with a full field of ripe crops that was enough to bog the
+   main thread down. A scaling, fading ring composites instead. */
+.plot.ready::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 16px;
+  border: 3px solid rgba(255, 198, 63, 0.55);
+  pointer-events: none;
+  animation: readyPulse 1.5s ease-in-out infinite;
 }
 
 .plot.ready .crop-sprite {
   animation: readyBounce 0.9s ease-in-out infinite;
 }
 
-@keyframes readyGlow {
-  0%, 100% {
-    box-shadow:
-      inset 0 3px 0 rgba(255, 224, 170, 0.2),
-      inset 0 -10px 16px rgba(45, 24, 5, 0.45),
-      0 6px 0 var(--soil-deepest),
-      0 0 0 0 rgba(255, 198, 63, 0.55),
-      0 11px 18px rgba(38, 20, 4, 0.35);
-  }
-  50% {
-    box-shadow:
-      inset 0 3px 0 rgba(255, 224, 170, 0.2),
-      inset 0 -10px 16px rgba(45, 24, 5, 0.45),
-      0 6px 0 var(--soil-deepest),
-      0 0 0 9px rgba(255, 198, 63, 0),
-      0 11px 18px rgba(38, 20, 4, 0.35);
-  }
+@keyframes readyPulse {
+  0%, 100% { opacity: 0.9; transform: scale(1); }
+  50%      { opacity: 0;   transform: scale(1.11); }
 }
 
 @keyframes readyBounce {
@@ -969,9 +981,20 @@ body {
   }
 }
 
+/* Overlay rather than a filter, which forced a repaint of the whole tile. */
+.plot.locked.unlockable::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 11px;
+  background: rgba(255, 214, 110, 0.2);
+  pointer-events: none;
+  animation: unlockPulse 1.9s ease-in-out infinite;
+}
+
 @keyframes unlockPulse {
-  0%, 100% { filter: brightness(1); }
-  50%      { filter: brightness(1.18); }
+  0%, 100% { opacity: 0; }
+  50%      { opacity: 1; }
 }
 
 .plot-lock-cost {

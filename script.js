@@ -296,9 +296,12 @@ function migrateSave(parsed) {
   return merged;
 }
 
+const BACKUP_SAVE_KEY = `${SAVE_KEY}_backup`;
+
 function loadState() {
+  let raw = null;
   try {
-    let raw = localStorage.getItem(SAVE_KEY);
+    raw = localStorage.getItem(SAVE_KEY);
     if (!raw) {
       for (const key of LEGACY_SAVE_KEYS) {
         const legacy = localStorage.getItem(key);
@@ -308,6 +311,14 @@ function loadState() {
     if (!raw) return freshState();
     return migrateSave(JSON.parse(raw));
   } catch (e) {
+    // A farm is about to be replaced by an empty one, and init() will write
+    // that over the top. Keep the original bytes so the progress is still
+    // recoverable rather than gone for good.
+    if (raw) {
+      try {
+        localStorage.setItem(BACKUP_SAVE_KEY, raw);
+      } catch (ignored) { /* storage full or blocked; nothing more we can do */ }
+    }
     return freshState();
   }
 }
@@ -315,7 +326,13 @@ function loadState() {
 let state = loadState();
 
 function saveState() {
-  localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+  } catch (e) {
+    // Private-browsing modes and full quotas both reject writes. Losing a
+    // save silently is worse than saying so.
+    showToast('Could not save progress — storage is unavailable.');
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1410,10 +1427,48 @@ function render() {
 }
 
 function tick() {
+  // While the tab is backgrounded — switching apps on a phone, mostly —
+  // there is nothing to draw. Everything runs off absolute timestamps, so
+  // skipping the work costs no progress and it all catches up on return.
+  if (document.hidden) return;
   updateDay();
   render();
   state.lastSeenAt = Date.now();
   saveState();
+}
+
+// If another tab (or the installed app alongside the browser) has played more
+// recently than us, take its progress instead of writing our stale copy over
+// the top of it. Only the visible tab ticks, so this is all it takes for two
+// copies of the game to stop overwriting each other.
+function adoptNewerSave() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    const stored = JSON.parse(raw);
+    if (Number.isFinite(stored.lastSeenAt) && stored.lastSeenAt > (state.lastSeenAt || 0)) {
+      state = migrateSave(stored);
+    }
+  } catch (e) { /* unreadable save: keep playing with what we have */ }
+}
+
+// Leaving the page is the moment progress is most likely to be lost, so
+// commit it rather than waiting for the next tick.
+function handleVisibilityChange() {
+  if (document.hidden) {
+    state.lastSeenAt = Date.now();
+    saveState();
+    stopMusic();
+    // Let the browser reclaim the audio graph instead of leaving scheduled
+    // notes queued against a context the OS has frozen.
+    if (audioCtx && audioCtx.state === 'running') audioCtx.suspend().catch(() => {});
+  } else {
+    adoptNewerSave();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    syncMusic();
+    updateDay();
+    render();
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1434,6 +1489,13 @@ function init() {
   document.getElementById('musicToggleBtn').addEventListener('click', toggleMusic);
   const volumeSlider = document.getElementById('volumeSlider');
   volumeSlider.addEventListener('input', () => setVolume(Number(volumeSlider.value) / 100));
+
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  // pagehide is the one teardown event phones fire reliably; unload is not.
+  window.addEventListener('pagehide', () => {
+    state.lastSeenAt = Date.now();
+    saveState();
+  });
 
   document.getElementById('downloadSaveBtn').addEventListener('click', downloadSave);
   const loadInput = document.getElementById('loadSaveInput');

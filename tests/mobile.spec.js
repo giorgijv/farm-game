@@ -33,13 +33,17 @@ function makeSave(overrides = {}) {
   };
 }
 
+let seedCounter = 0;
 async function load(page, save = makeSave()) {
-  await page.goto('/');
-  await page.evaluate(([k, v]) => {
+  // Seed before page scripts run; see the note in game.spec.js.
+  const nonce = `__seeded_${(seedCounter += 1)}`;
+  await page.addInitScript(([k, v, n]) => {
+    if (sessionStorage.getItem(n)) return;
     localStorage.clear();
     localStorage.setItem(k, JSON.stringify(v));
-  }, [SAVE_KEY, save]);
-  await page.reload();
+    sessionStorage.setItem(n, '1');
+  }, ['farmLifeSave_v2', save, nonce]);
+  await page.goto('/');
   await page.waitForSelector('#plotsGrid .plot');
 }
 

@@ -2,6 +2,11 @@ const { test, expect } = require('@playwright/test');
 
 const SAVE_KEY = 'farmLifeSave_v2';
 const LEGACY_KEY = 'farmLifeSave_v1';
+/** Pre-unlocking every award keeps reward payouts out of coin arithmetic. */
+const ACHIEVEMENT_IDS = [
+  'first_harvest', 'green_thumb', 'master_farmer', 'rancher', 'poultry_farmer',
+  'shepherd', 'full_barn', 'full_house', 'wealthy_farmer', 'week_one', 'big_business',
+];
 const DAY_LENGTH_MS = 90_000;
 const PLOT_COUNT = 16;
 
@@ -31,16 +36,26 @@ function makeSave(overrides = {}) {
   };
 }
 
-/** Writes a save under `key`, then loads the game with it in place. */
+/**
+ * Puts a save in place *before* any page script runs, then loads the game.
+ *
+ * Seeding after load and reloading does not work: the outgoing page commits
+ * its own state on pagehide, overwriting whatever the test just wrote. The
+ * nonce makes seeding happen once per load() call, so a later reload in the
+ * same test keeps whatever the game itself saved.
+ */
+let seedCounter = 0;
 async function load(page, save, key = SAVE_KEY) {
-  await page.goto('/');
   if (save !== undefined) {
-    await page.evaluate(([k, v]) => {
+    const nonce = `__seeded_${(seedCounter += 1)}`;
+    await page.addInitScript(([k, v, n]) => {
+      if (sessionStorage.getItem(n)) return;
       localStorage.clear();
       localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
-    }, [key, save]);
-    await page.reload();
+      sessionStorage.setItem(n, '1');
+    }, [key, save, nonce]);
   }
+  await page.goto('/');
   await page.waitForSelector('#plotsGrid .plot');
 }
 
@@ -140,14 +155,9 @@ test.describe('animals', () => {
     await expect.poll(async () => (await inventory(page)).wheat).toBe(17);
     await expect(page.locator('#cowList .animal-state.producing')).toHaveCount(1);
 
-    // Fast-forward past the production timer.
-    await page.evaluate(([k, t]) => {
-      const s = JSON.parse(localStorage.getItem(k));
-      s.cows[0].feedAt = t;
-      localStorage.setItem(k, JSON.stringify(s));
-    }, [SAVE_KEY, secondsAgo(60)]);
-    await page.reload();
-    await page.getByRole('button', { name: /Animals/ }).click();
+    // Fast-forward past the production timer. Mutating the live state avoids
+    // a reload, during which the outgoing page would save over the edit.
+    await page.evaluate((t) => { state.cows[0].feedAt = t; }, secondsAgo(60));
 
     await expect(page.locator('#cowList .animal-state.ready')).toHaveCount(1);
     await page.locator('#cowList .animal-btn').click(); // collect
@@ -297,13 +307,11 @@ test.describe('day cycle', () => {
     await load(page, makeSave());
 
     for (const fraction of [0, 0.15, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9]) {
-      await page.evaluate(([k, offset]) => {
-        const s = JSON.parse(localStorage.getItem(k));
-        s.dayStartedAt = Date.now() - offset;
-        localStorage.setItem(k, JSON.stringify(s));
-      }, [SAVE_KEY, fraction * DAY_LENGTH_MS]);
-      await page.reload();
-      await page.waitForSelector('#celestialBody');
+      await page.evaluate((offset) => {
+        state.dayStartedAt = Date.now() - offset;
+        updateDayNightVisuals();
+      }, fraction * DAY_LENGTH_MS);
+      await page.waitForTimeout(150);
 
       const box = await page.locator('#celestialBody').boundingBox();
       const viewport = page.viewportSize();
@@ -807,6 +815,135 @@ test.describe('progressive web app', () => {
     await expect.poll(() => coins(page)).toBe(295);
 
     await context.setOffline(false);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Sustained-play performance                                          */
+/* ------------------------------------------------------------------ */
+
+test.describe('animation cost', () => {
+  test('nothing that loops forever animates a property that repaints', async ({ page }) => {
+    await load(page, makeSave());
+
+    // A full field of ripe crops means a dozen-plus of these run at once, so
+    // an expensive property here is what turns a long session into a stutter.
+    const offenders = await page.evaluate(async () => {
+      const css = await fetch('styles.css').then((r) => r.text());
+      const composited = new Set(['transform', 'opacity']);
+      const found = [];
+      const blocks = css.matchAll(/@keyframes\s+([\w-]+)\s*\{([\s\S]*?)\n\}/g);
+      const declarations = css.match(/animation:[^;]*;/g) || [];
+      for (const [, name, body] of blocks) {
+        const loopsForever = declarations.some(
+          (d) => new RegExp(`\\b${name}\\b`).test(d) && d.includes('infinite'),
+        );
+        if (!loopsForever) continue;
+        const props = [...new Set([...body.matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1]))];
+        const expensive = props.filter((p) => !composited.has(p));
+        if (expensive.length) found.push(`${name} animates ${expensive.join(', ')}`);
+      }
+      return found;
+    });
+
+    expect(offenders).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Progress durability                                                 */
+/* ------------------------------------------------------------------ */
+
+test.describe('progress is never lost', () => {
+  test('coins and stock survive a reload', async ({ page }) => {
+    await load(page, makeSave({
+      coins: 500,
+      unlockedAchievements: ACHIEVEMENT_IDS,
+      plots: [
+        { crop: 'wheat', plantedAt: secondsAgo(20) },
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+    }));
+
+    await page.locator('#plotsGrid > *').first().click();          // +3 wheat
+    await page.locator('.seed-btn').first().click();
+    await page.locator('#plotsGrid .plot.empty').first().click();  // -5 coins
+    await expect.poll(() => coins(page)).toBe(495);
+
+    await page.reload();
+    await page.waitForSelector('#plotsGrid .plot');
+
+    expect(await coins(page)).toBe(495);
+    expect((await inventory(page)).wheat).toBe(3);
+    // The planted crop is still growing after the reload, not reset.
+    await expect(page.locator('#plotsGrid > *').first().locator('.crop-sprite')).toHaveCount(1);
+  });
+
+  test('progress is committed as soon as the page is backgrounded', async ({ page }) => {
+    await load(page, makeSave({ coins: 500, unlockedAchievements: ACHIEVEMENT_IDS }));
+
+    await page.evaluate(() => {
+      // Bank coins without going through an action that saves, then background
+      // the page — the handler must flush it.
+      state.coins = 4242;
+      Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(await coins(page)).toBe(4242);
+  });
+
+  test('a backgrounded page stops writing over a newer save', async ({ page }) => {
+    await load(page, makeSave({ coins: 500, unlockedAchievements: ACHIEVEMENT_IDS }));
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    // Stand in for a second tab, or the installed app, saving newer progress.
+    await page.evaluate((k) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.coins = 9999;
+      s.lastSeenAt = Date.now() + 5000;
+      localStorage.setItem(k, JSON.stringify(s));
+    }, SAVE_KEY);
+
+    // Several ticks pass while hidden; none of them may clobber that.
+    await page.waitForTimeout(2500);
+    expect(await coins(page)).toBe(9999);
+  });
+
+  test('returning to the page picks up the newer save', async ({ page }) => {
+    await load(page, makeSave({ coins: 500, unlockedAchievements: ACHIEVEMENT_IDS }));
+
+    await page.evaluate((k) => {
+      Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      const s = JSON.parse(localStorage.getItem(k));
+      s.coins = 8888;
+      s.lastSeenAt = Date.now() + 5000;
+      localStorage.setItem(k, JSON.stringify(s));
+    }, SAVE_KEY);
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await expect(page.locator('#coinsLabel')).toContainText('8888');
+    await expect.poll(() => coins(page)).toBe(8888);
+  });
+
+  test('an unreadable save is kept as a backup rather than thrown away', async ({ page }) => {
+    await load(page, 'not valid json at all {{{');
+
+    const backup = await page.evaluate(
+      (k) => localStorage.getItem(`${k}_backup`), SAVE_KEY,
+    );
+    expect(backup).toBe('not valid json at all {{{');
+    // The player still gets a working farm.
+    await expect(page.locator('#plotsGrid .plot')).toHaveCount(PLOT_COUNT);
   });
 });
 
