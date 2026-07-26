@@ -539,24 +539,21 @@ test.describe('upgrades', () => {
   });
 
   test('rich feed shortens animal production', async ({ page }) => {
-    // Chickens take 15s; at level 3 that is 9.6s.
-    const cows = () => [{ id: 1, state: 'producing', feedAt: secondsAgo(12) }];
+    // Chickens take 15s; at level 3 that drops to 9.6s. A chicken fed 12s ago
+    // is therefore still producing at level 0 but finished at level 3.
+    const chickens = () => [{ id: 1, state: 'producing', feedAt: secondsAgo(12) }];
 
-    await load(page, makeSave({
-      chickens: [{ id: 1, state: 'producing', feedAt: secondsAgo(12) }],
-      nextAnimalId: 2,
-    }));
+    await load(page, makeSave({ chickens: chickens(), nextAnimalId: 2 }));
     await page.getByRole('button', { name: /Animals/ }).click();
     await expect(page.locator('#chickenList .animal-state.producing')).toHaveCount(1);
 
     await load(page, makeSave({
-      chickens: [{ id: 1, state: 'producing', feedAt: secondsAgo(12) }],
+      chickens: chickens(),
       nextAnimalId: 2,
       upgrades: { sprinkler: 0, feed: 3, fertiliser: 0, contacts: 0 },
     }));
     await page.getByRole('button', { name: /Animals/ }).click();
     await expect(page.locator('#chickenList .animal-state.ready')).toHaveCount(1);
-    void cows;
   });
 
   test('upgrade levels survive migration and are clamped', async ({ page }) => {

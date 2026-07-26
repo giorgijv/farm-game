@@ -35,8 +35,6 @@
 
   /* Wood */
   --wood: #b9793f;
-  --wood-light: #d29a5c;
-  --wood-mid: #a96c37;
   --wood-dark: #7a4a22;
   --wood-darker: #5b3517;
 
@@ -48,12 +46,9 @@
   /* Grass / field */
   --grass: #7cbf55;
   --grass-dark: #5d9c3c;
-  --grass-deep: #4a8130;
 
   /* Soil */
   --soil: #8a5a30;
-  --soil-light: #a06d3c;
-  --soil-dark: #573520;
   --soil-deepest: #3f2410;
 
   /* Ink + accents */

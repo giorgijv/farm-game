@@ -144,7 +144,7 @@ function freshState() {
     dayStartedAt: Date.now(),
     selectedSeed: null,
     unlockedPlots: INITIAL_UNLOCKED_PLOTS,
-    plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null, plantedAt: null })),
+    plots: Array.from({ length: PLOT_COUNT }, emptyPlot),
     cows: [],
     chickens: [],
     sheep: [],
@@ -187,6 +187,24 @@ function cropYield(crop) {
   return crop.yield + upgradeLevel('fertiliser');
 }
 
+function emptyPlot() {
+  return { crop: null, plantedAt: null };
+}
+
+// How far along a plot is, 0 to 1. Every caller needs this and each was
+// re-deriving it, which meant the upgrade multiplier had to be remembered in
+// several places at once.
+function plotProgress(plot) {
+  const crop = plot && CROPS[plot.crop];
+  if (!crop || !Number.isFinite(plot.plantedAt)) return 0;
+  return clamp01((nowSec() - plot.plantedAt) / cropGrowTime(crop));
+}
+
+function animalProgress(animal, def) {
+  if (animal.state !== 'producing' || !Number.isFinite(animal.feedAt)) return 0;
+  return clamp01((nowSec() - animal.feedAt) / animalProduceTime(def));
+}
+
 function goodPrice(key) {
   return Math.round(GOODS[key].sellPrice * (1 + 0.10 * upgradeLevel('contacts')));
 }
@@ -221,12 +239,12 @@ function migrateSave(parsed) {
   merged.unlockedPlots = Math.min(Math.max(Math.floor(merged.unlockedPlots), 1), PLOT_COUNT);
 
   const plots = Array.isArray(parsed.plots) ? parsed.plots.slice(0, PLOT_COUNT) : [];
-  while (plots.length < PLOT_COUNT) plots.push({ crop: null, plantedAt: null });
+  while (plots.length < PLOT_COUNT) plots.push(emptyPlot());
   merged.plots = plots.map((p) => {
-    if (!p || typeof p !== 'object') return { crop: null, plantedAt: null };
+    if (!p || typeof p !== 'object') return emptyPlot();
     // Drop anything planted with a crop this build no longer defines.
-    if (p.crop && !CROPS[p.crop]) return { crop: null, plantedAt: null };
-    if (p.crop && !Number.isFinite(p.plantedAt)) return { crop: null, plantedAt: null };
+    if (p.crop && !CROPS[p.crop]) return emptyPlot();
+    if (p.crop && !Number.isFinite(p.plantedAt)) return emptyPlot();
     return { crop: p.crop ?? null, plantedAt: p.plantedAt ?? null };
   });
 
@@ -567,8 +585,7 @@ function plotSignature(plot, idx) {
     return idx === state.unlockedPlots ? 'locked:next' : 'locked:far';
   }
   if (!plot.crop) return 'empty';
-  const crop = CROPS[plot.crop];
-  const progress = clamp01((nowSec() - plot.plantedAt) / cropGrowTime(crop));
+  const progress = plotProgress(plot);
   if (progress >= 1) return `ready:${plot.crop}`;
   return `grow:${plot.crop}:${plotGrowthStage(progress)}`;
 }
@@ -603,7 +620,7 @@ function buildPlotCell(cell, plot, idx, sig) {
     cell.onclick = () => plantSeed(idx);
   } else {
     const crop = CROPS[plot.crop];
-    const progress = clamp01((nowSec() - plot.plantedAt) / cropGrowTime(crop));
+    const progress = plotProgress(plot);
     const sprite = document.createElement('span');
     sprite.className = 'crop-sprite';
 
@@ -663,8 +680,7 @@ function renderPlots() {
     const fill = cell.querySelector('.plot-progress-fill');
     if (fill && plot.crop) {
       const crop = CROPS[plot.crop];
-      const progress = clamp01((nowSec() - plot.plantedAt) / cropGrowTime(crop));
-      const percent = Math.round(progress * 100);
+      const percent = Math.round(plotProgress(plot) * 100);
       fill.style.width = `${percent}%`;
       cell.title = `${crop.name} growing... ${percent}%`;
       fill.parentElement.setAttribute('aria-valuenow', String(percent));
@@ -698,8 +714,7 @@ function harvestPlot(idx) {
   const plot = state.plots[idx];
   if (!plot.crop) return;
   const crop = CROPS[plot.crop];
-  const elapsed = nowSec() - plot.plantedAt;
-  if (elapsed < cropGrowTime(crop)) return;
+  if (plotProgress(plot) < 1) return;
   const yielded = cropYield(crop);
   state.inventory[plot.crop] += yielded;
   state.stats.totalHarvested += yielded;
@@ -815,9 +830,7 @@ function renderAnimalList(kind) {
 
   list.forEach((animal, i) => {
     const card = container.children[i];
-    const progress = animal.state === 'producing'
-      ? clamp01((nowSec() - animal.feedAt) / animalProduceTime(def))
-      : 0;
+    const progress = animalProgress(animal, def);
     const ready = animal.state === 'producing' && progress >= 1;
     const sig = animalSignature(animal, def, ready);
 
@@ -856,8 +869,7 @@ function collectAnimal(kind, id) {
   const def = ANIMALS[kind];
   const animal = state[def.stateKey].find((a) => a.id === id);
   if (!animal || animal.state !== 'producing') return;
-  const progress = (nowSec() - animal.feedAt) / animalProduceTime(def);
-  if (progress < 1) return;
+  if (animalProgress(animal, def) < 1) return;
   state.inventory[def.produceKey] += def.produceYield;
   SFX.collect();
   spawnFloatText(
