@@ -172,6 +172,22 @@ function showToast(msg) {
   toastTimer = setTimeout(() => el.classList.add('hidden'), 1600);
 }
 
+// "+3 🌾" numbers that drift up from whatever the player just tapped.
+function spawnFloatText(text, anchorEl, variant) {
+  const layer = document.getElementById('fxLayer');
+  if (!layer || !anchorEl || !anchorEl.getBoundingClientRect) return;
+  const rect = anchorEl.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) return;
+
+  const el = document.createElement('div');
+  el.className = 'float-text' + (variant ? ` ${variant}` : '');
+  el.textContent = text;
+  el.style.left = `${rect.left + rect.width / 2}px`;
+  el.style.top = `${rect.top + rect.height * 0.4}px`;
+  layer.appendChild(el);
+  setTimeout(() => el.remove(), 1250);
+}
+
 function pickCropToConsume(amount) {
   // Prefer consuming the cheapest crop first, spread across types if needed.
   const have = CROP_ORDER.reduce((sum, k) => sum + state.inventory[k], 0);
@@ -278,18 +294,30 @@ function setActiveTab(tab) {
 
 function renderSeedBar() {
   const bar = document.getElementById('seedBar');
-  bar.innerHTML = '';
-  CROP_ORDER.forEach((key) => {
-    const crop = CROPS[key];
-    const btn = document.createElement('button');
-    btn.className = 'seed-btn' + (state.selectedSeed === key ? ' selected' : '');
-    btn.disabled = state.coins < crop.seedCost;
-    btn.innerHTML = `<span class="seed-emoji">${crop.emoji}</span><span>${crop.name}</span><span>${crop.seedCost}💰</span>`;
-    btn.addEventListener('click', () => {
-      state.selectedSeed = state.selectedSeed === key ? null : key;
-      renderSeedBar();
+
+  // Build the buttons once; afterwards only toggle selection/affordability so
+  // we never tear down elements mid-animation.
+  if (bar.children.length !== CROP_ORDER.length) {
+    bar.innerHTML = '';
+    CROP_ORDER.forEach((key) => {
+      const crop = CROPS[key];
+      const btn = document.createElement('button');
+      btn.className = 'seed-btn';
+      btn.innerHTML = `<span class="seed-emoji">${crop.emoji}</span><span>${crop.name}</span><span>${crop.seedCost}💰</span>`;
+      btn.addEventListener('click', () => {
+        state.selectedSeed = state.selectedSeed === key ? null : key;
+        SFX.click();
+        renderSeedBar();
+      });
+      bar.appendChild(btn);
     });
-    bar.appendChild(btn);
+  }
+
+  CROP_ORDER.forEach((key, i) => {
+    const crop = CROPS[key];
+    const btn = bar.children[i];
+    btn.classList.toggle('selected', state.selectedSeed === key);
+    btn.disabled = state.coins < crop.seedCost;
   });
 }
 
@@ -313,56 +341,97 @@ function unlockPlot() {
   render();
 }
 
+function plotGrowthStage(progress) {
+  return progress < 0.4 ? 0 : progress < 0.75 ? 1 : 2;
+}
+
+// A plot only needs rebuilding when its *structure* changes. Rebuilding every
+// tick would restart the sway/bounce animations a second into every loop.
+function plotSignature(plot, idx) {
+  if (idx >= state.unlockedPlots) {
+    return idx === state.unlockedPlots ? 'locked:next' : 'locked:far';
+  }
+  if (!plot.crop) return 'empty';
+  const crop = CROPS[plot.crop];
+  const progress = clamp01((nowSec() - plot.plantedAt) / crop.growTime);
+  if (progress >= 1) return `ready:${plot.crop}`;
+  return `grow:${plot.crop}:${plotGrowthStage(progress)}`;
+}
+
+function buildPlotCell(cell, plot, idx, sig) {
+  cell.className = 'plot';
+  cell.innerHTML = '';
+  cell.onclick = null;
+
+  if (idx >= state.unlockedPlots) {
+    cell.classList.add('locked');
+    const cost = PLOT_UNLOCK_BASE_COST + (idx - INITIAL_UNLOCKED_PLOTS) * PLOT_UNLOCK_INCREMENT;
+    cell.innerHTML = `<span>🔒</span><span class="plot-lock-cost">${cost}💰</span>`;
+    if (idx === state.unlockedPlots) {
+      cell.classList.add('unlockable');
+      cell.title = `Unlock this plot for ${cost}💰`;
+      cell.onclick = () => unlockPlot();
+    } else {
+      cell.title = 'Unlock the previous plot first';
+    }
+  } else if (!plot.crop) {
+    cell.classList.add('empty');
+    cell.textContent = '➕';
+    cell.title = 'Plant a seed here';
+    cell.onclick = () => plantSeed(idx);
+  } else {
+    const crop = CROPS[plot.crop];
+    const progress = clamp01((nowSec() - plot.plantedAt) / crop.growTime);
+    const sprite = document.createElement('span');
+    sprite.className = 'crop-sprite';
+
+    if (progress >= 1) {
+      cell.classList.add('ready');
+      sprite.textContent = crop.emoji;
+      cell.appendChild(sprite);
+      cell.title = `Harvest ${crop.name}`;
+      cell.onclick = () => harvestPlot(idx);
+    } else {
+      const stage = plotGrowthStage(progress);
+      sprite.textContent = stage === 0 ? '🌱' : stage === 1 ? '🌿' : crop.emoji;
+      // Scale the sprite as it matures instead of fading the whole tile, so the
+      // soil and progress bar stay fully legible.
+      sprite.style.fontSize = `${0.62 + stage * 0.19}em`;
+      cell.appendChild(sprite);
+
+      const bar = document.createElement('div');
+      bar.className = 'plot-progress';
+      const fill = document.createElement('div');
+      fill.className = 'plot-progress-fill';
+      bar.appendChild(fill);
+      cell.appendChild(bar);
+    }
+  }
+
+  cell.dataset.sig = sig;
+}
+
 function renderPlots() {
   const grid = document.getElementById('plotsGrid');
-  grid.innerHTML = '';
+
+  // Create the fixed set of tiles once, then reuse them across ticks.
+  while (grid.children.length < PLOT_COUNT) {
+    grid.appendChild(document.createElement('div'));
+  }
+
   state.plots.forEach((plot, idx) => {
-    const cell = document.createElement('div');
-    cell.className = 'plot';
+    const cell = grid.children[idx];
+    const sig = plotSignature(plot, idx);
+    if (cell.dataset.sig !== sig) buildPlotCell(cell, plot, idx, sig);
 
-    if (idx >= state.unlockedPlots) {
-      cell.classList.add('locked');
-      const cost = PLOT_UNLOCK_BASE_COST + (idx - INITIAL_UNLOCKED_PLOTS) * PLOT_UNLOCK_INCREMENT;
-      cell.innerHTML = `<span>🔒</span><span class="plot-lock-cost">${cost}💰</span>`;
-      if (idx === state.unlockedPlots) {
-        cell.classList.add('unlockable');
-        cell.title = `Unlock this plot for ${cost}💰`;
-        cell.addEventListener('click', () => unlockPlot());
-      } else {
-        cell.title = 'Unlock the previous plot first';
-      }
-    } else if (!plot.crop) {
-      cell.classList.add('empty');
-      cell.textContent = '➕';
-      cell.title = 'Plant a seed here';
-      cell.addEventListener('click', () => plantSeed(idx));
-    } else {
+    // Progress is continuous, so it updates in place every tick.
+    const fill = cell.querySelector('.plot-progress-fill');
+    if (fill && plot.crop) {
       const crop = CROPS[plot.crop];
-      const elapsed = nowSec() - plot.plantedAt;
-      const progress = clamp01(elapsed / crop.growTime);
-      const ready = progress >= 1;
-
-      if (ready) {
-        cell.classList.add('ready');
-        cell.textContent = crop.emoji;
-        cell.title = `Harvest ${crop.name}`;
-        cell.addEventListener('click', () => harvestPlot(idx));
-      } else {
-        cell.textContent = progress < 0.4 ? '🌱' : progress < 0.75 ? '🌿' : crop.emoji;
-        cell.style.opacity = String(0.55 + progress * 0.45);
-        cell.title = `${crop.name} growing... ${Math.round(progress * 100)}%`;
-
-        const bar = document.createElement('div');
-        bar.className = 'plot-progress';
-        const fill = document.createElement('div');
-        fill.className = 'plot-progress-fill';
-        fill.style.width = `${Math.round(progress * 100)}%`;
-        bar.appendChild(fill);
-        cell.appendChild(bar);
-      }
+      const progress = clamp01((nowSec() - plot.plantedAt) / crop.growTime);
+      fill.style.width = `${Math.round(progress * 100)}%`;
+      cell.title = `${crop.name} growing... ${Math.round(progress * 100)}%`;
     }
-
-    grid.appendChild(cell);
   });
 }
 
@@ -397,6 +466,7 @@ function harvestPlot(idx) {
   state.inventory[plot.crop] += crop.yield;
   state.stats.totalHarvested += crop.yield;
   SFX.harvest();
+  spawnFloatText(`+${crop.yield} ${crop.emoji}`, document.getElementById('plotsGrid').children[idx], 'gain');
   showToast(`Harvested ${crop.yield}x ${crop.emoji} ${crop.name}`);
   plot.crop = null;
   plot.plantedAt = null;
@@ -408,83 +478,112 @@ function harvestPlot(idx) {
 /* Animals tab                                                          */
 /* ------------------------------------------------------------------ */
 
+function animalSignature(animal, def, ready) {
+  if (ready) return 'ready';
+  if (animal.state === 'producing') return 'producing';
+  const haveEnough = CROP_ORDER.reduce((sum, k) => sum + state.inventory[k], 0) >= def.feedAmount;
+  return `hungry:${haveEnough ? 'fed' : 'nofood'}`;
+}
+
+function buildAnimalCard(card, animal, kind, def, ready, sig) {
+  card.className = 'animal-card';
+  card.innerHTML = '';
+
+  const emoji = document.createElement('div');
+  emoji.className = 'animal-emoji';
+  emoji.textContent = def.emoji;
+  card.appendChild(emoji);
+
+  const stateLabel = document.createElement('div');
+  const btn = document.createElement('button');
+  btn.className = 'animal-btn';
+
+  if (ready) {
+    stateLabel.className = 'animal-state ready';
+    stateLabel.textContent = `${def.produceEmoji} Ready!`;
+    card.appendChild(stateLabel);
+
+    btn.textContent = `Collect ${def.produceEmoji}`;
+    btn.onclick = () => collectAnimal(kind, animal.id);
+    card.appendChild(btn);
+  } else if (animal.state === 'producing') {
+    stateLabel.className = 'animal-state producing';
+    stateLabel.textContent = 'Producing...';
+    card.appendChild(stateLabel);
+
+    const bar = document.createElement('div');
+    bar.className = 'animal-progress';
+    const fill = document.createElement('div');
+    fill.className = 'animal-progress-fill';
+    bar.appendChild(fill);
+    card.appendChild(bar);
+
+    btn.textContent = 'Producing...';
+    btn.disabled = true;
+    card.appendChild(btn);
+  } else {
+    stateLabel.className = 'animal-state hungry';
+    stateLabel.textContent = 'Hungry';
+    card.appendChild(stateLabel);
+
+    const haveEnough = CROP_ORDER.reduce((sum, k) => sum + state.inventory[k], 0) >= def.feedAmount;
+    btn.textContent = `Feed (${def.feedAmount} ${def.feedAmount === 1 ? 'crop' : 'crops'})`;
+    btn.disabled = !haveEnough;
+    btn.onclick = () => feedAnimal(kind, animal.id);
+    card.appendChild(btn);
+
+    const sellBtn = document.createElement('button');
+    sellBtn.className = 'animal-btn-sell';
+    const refund = Math.round(def.buyBaseCost * ANIMAL_SELL_REFUND_RATE);
+    sellBtn.textContent = `Sell (${refund}💰)`;
+    sellBtn.onclick = () => sellAnimal(kind, animal.id);
+    card.appendChild(sellBtn);
+  }
+
+  card.dataset.sig = sig;
+  card.dataset.animalId = String(animal.id);
+}
+
 function renderAnimalList(kind) {
   const def = ANIMALS[kind];
   const list = state[def.stateKey];
   const container = document.getElementById(kind + 'List');
-  container.innerHTML = '';
 
   if (list.length === 0) {
-    const empty = document.createElement('p');
     const plural = def.pluralName || `${def.name.toLowerCase()}s`;
-    empty.textContent = `No ${plural} yet — buy one below!`;
-    container.appendChild(empty);
+    const message = `No ${plural} yet — buy one below!`;
+    if (container.firstElementChild?.tagName !== 'P') {
+      container.innerHTML = '';
+      const empty = document.createElement('p');
+      empty.textContent = message;
+      container.appendChild(empty);
+    }
+    return;
   }
 
-  list.forEach((animal) => {
-    // Auto-flip producing -> ready is handled visually; collect checks time directly.
+  // Drop the "none yet" placeholder and any cards for sold animals.
+  if (container.firstElementChild?.tagName === 'P') container.innerHTML = '';
+  while (container.children.length > list.length) {
+    container.removeChild(container.lastElementChild);
+  }
+  while (container.children.length < list.length) {
+    container.appendChild(document.createElement('div'));
+  }
+
+  list.forEach((animal, i) => {
+    const card = container.children[i];
     const progress = animal.state === 'producing'
       ? clamp01((nowSec() - animal.feedAt) / def.produceTime)
       : 0;
     const ready = animal.state === 'producing' && progress >= 1;
+    const sig = animalSignature(animal, def, ready);
 
-    const card = document.createElement('div');
-    card.className = 'animal-card';
-
-    const emoji = document.createElement('div');
-    emoji.className = 'animal-emoji';
-    emoji.textContent = def.emoji;
-    card.appendChild(emoji);
-
-    const stateLabel = document.createElement('div');
-    if (ready) {
-      stateLabel.className = 'animal-state ready';
-      stateLabel.textContent = `${def.produceEmoji} Ready!`;
-      card.appendChild(stateLabel);
-    } else if (animal.state === 'producing') {
-      stateLabel.className = 'animal-state producing';
-      stateLabel.textContent = 'Producing...';
-      card.appendChild(stateLabel);
-
-      const bar = document.createElement('div');
-      bar.className = 'animal-progress';
-      const fill = document.createElement('div');
-      fill.className = 'animal-progress-fill';
-      fill.style.width = `${Math.round(progress * 100)}%`;
-      bar.appendChild(fill);
-      card.appendChild(bar);
-    } else {
-      stateLabel.className = 'animal-state hungry';
-      stateLabel.textContent = 'Hungry';
-      card.appendChild(stateLabel);
+    if (card.dataset.sig !== sig || card.dataset.animalId !== String(animal.id)) {
+      buildAnimalCard(card, animal, kind, def, ready, sig);
     }
 
-    const btn = document.createElement('button');
-    btn.className = 'animal-btn';
-    if (ready) {
-      btn.textContent = `Collect ${def.produceEmoji}`;
-      btn.addEventListener('click', () => collectAnimal(kind, animal.id));
-      card.appendChild(btn);
-    } else if (animal.state === 'producing') {
-      btn.textContent = 'Producing...';
-      btn.disabled = true;
-      card.appendChild(btn);
-    } else {
-      const haveEnough = CROP_ORDER.reduce((sum, k) => sum + state.inventory[k], 0) >= def.feedAmount;
-      btn.textContent = `Feed (${def.feedAmount} crops)`;
-      btn.disabled = !haveEnough;
-      btn.addEventListener('click', () => feedAnimal(kind, animal.id));
-      card.appendChild(btn);
-
-      const sellBtn = document.createElement('button');
-      sellBtn.className = 'animal-btn-sell';
-      const refund = Math.round(def.buyBaseCost * ANIMAL_SELL_REFUND_RATE);
-      sellBtn.textContent = `Sell (${refund}💰)`;
-      sellBtn.addEventListener('click', () => sellAnimal(kind, animal.id));
-      card.appendChild(sellBtn);
-    }
-
-    container.appendChild(card);
+    const fill = card.querySelector('.animal-progress-fill');
+    if (fill) fill.style.width = `${Math.round(progress * 100)}%`;
   });
 }
 
@@ -514,6 +613,11 @@ function collectAnimal(kind, id) {
   if (progress < 1) return;
   state.inventory[def.produceKey] += def.produceYield;
   SFX.collect();
+  spawnFloatText(
+    `+${def.produceYield} ${def.produceEmoji}`,
+    document.querySelector(`#${kind}List [data-animal-id="${id}"]`),
+    'gain',
+  );
   showToast(`Collected ${def.produceYield}x ${def.produceEmoji}`);
   animal.state = 'hungry';
   animal.feedAt = null;
@@ -573,28 +677,37 @@ function buyAnimal(kind) {
 /* ------------------------------------------------------------------ */
 
 function renderMarket() {
+  const goods = Object.entries(GOODS);
   const sellList = document.getElementById('sellList');
-  sellList.innerHTML = '';
-  Object.entries(GOODS).forEach(([key, good]) => {
+
+  if (sellList.children.length !== goods.length) {
+    sellList.innerHTML = '';
+    goods.forEach(([key, good]) => {
+      const item = document.createElement('div');
+      item.className = 'market-item';
+      item.innerHTML = `
+        <div class="item-emoji">${good.emoji}</div>
+        <div>${good.name}</div>
+        <div class="market-have">Have: 0</div>
+        <div>${good.sellPrice}💰 each</div>
+      `;
+      const btn = document.createElement('button');
+      btn.addEventListener('click', () => sellAll(key));
+      item.appendChild(btn);
+      sellList.appendChild(item);
+    });
+  }
+
+  goods.forEach(([key, good], i) => {
     const qty = state.inventory[key];
-    const item = document.createElement('div');
-    item.className = 'market-item';
-    item.innerHTML = `
-      <div class="item-emoji">${good.emoji}</div>
-      <div>${good.name}</div>
-      <div>Have: ${qty}</div>
-      <div>${good.sellPrice}💰 each</div>
-    `;
-    const btn = document.createElement('button');
+    const item = sellList.children[i];
+    item.querySelector('.market-have').textContent = `Have: ${qty}`;
+    const btn = item.querySelector('button');
     btn.textContent = `Sell All (${qty * good.sellPrice}💰)`;
     btn.disabled = qty <= 0;
-    btn.addEventListener('click', () => sellAll(key));
-    item.appendChild(btn);
-    sellList.appendChild(item);
   });
 
   const invList = document.getElementById('inventoryList');
-  invList.innerHTML = '';
   const overview = [
     { emoji: '💰', name: 'Coins', value: state.coins },
     { emoji: '🐄', name: 'Cows', value: state.cows.length },
@@ -603,11 +716,19 @@ function renderMarket() {
     { emoji: '🌱', name: 'Plots planted', value: state.plots.filter((p) => p.crop).length + ' / ' + state.unlockedPlots },
     { emoji: '🔓', name: 'Plots unlocked', value: state.unlockedPlots + ' / ' + PLOT_COUNT },
   ];
-  overview.forEach((o) => {
-    const item = document.createElement('div');
-    item.className = 'inventory-item';
-    item.innerHTML = `<div class="item-emoji">${o.emoji}</div><div>${o.name}</div><div>${o.value}</div>`;
-    invList.appendChild(item);
+
+  if (invList.children.length !== overview.length) {
+    invList.innerHTML = '';
+    overview.forEach((o) => {
+      const item = document.createElement('div');
+      item.className = 'inventory-item';
+      item.innerHTML = `<div class="item-emoji">${o.emoji}</div><div>${o.name}</div><div class="inv-value"></div>`;
+      invList.appendChild(item);
+    });
+  }
+
+  overview.forEach((o, i) => {
+    invList.children[i].querySelector('.inv-value').textContent = String(o.value);
   });
 }
 
@@ -620,6 +741,8 @@ function sellAll(key) {
   state.stats.totalCoinsEarned += earned;
   state.inventory[key] = 0;
   SFX.sell();
+  const goodIndex = Object.keys(GOODS).indexOf(key);
+  spawnFloatText(`+${earned} 💰`, document.getElementById('sellList').children[goodIndex], 'coins');
   showToast(`Sold ${qty}x ${good.emoji} for ${earned}💰`);
   saveState();
   render();
@@ -686,8 +809,9 @@ function loadSaveFromFile(file) {
 /* ------------------------------------------------------------------ */
 
 const SKY_COLORS = {
-  day: { top: [143, 211, 244], bottom: [161, 227, 161], ground: [205, 238, 203] },
-  night: { top: [11, 21, 51], bottom: [27, 42, 74], ground: [39, 64, 35] },
+  day: { top: [126, 200, 240], bottom: [191, 230, 168], ground: [143, 201, 106] },
+  dusk: { top: [247, 129, 74], bottom: [255, 178, 106], ground: [186, 158, 96] },
+  night: { top: [12, 22, 54], bottom: [28, 44, 78], ground: [34, 58, 32] },
 };
 
 let currentNightFactor = 0;
@@ -700,19 +824,59 @@ function lerpColor(c1, c2, t) {
   return `rgb(${Math.round(lerp(c1[0], c2[0], t))}, ${Math.round(lerp(c1[1], c2[1], t))}, ${Math.round(lerp(c1[2], c2[2], t))})`;
 }
 
+// Pass the sky through a warm dusk band instead of fading blue straight to
+// navy. The sinusoidal night factor lingers near its extremes, so the orange
+// window stays brief — which is what makes it read as a real sunset.
+function skyColorAt(band, nightFactor) {
+  const t = clamp01(nightFactor);
+  return t < 0.5
+    ? lerpColor(SKY_COLORS.day[band], SKY_COLORS.dusk[band], t * 2)
+    : lerpColor(SKY_COLORS.dusk[band], SKY_COLORS.night[band], (t - 0.5) * 2);
+}
+
 function updateDayNightVisuals() {
   const phase = ((Date.now() - state.dayStartedAt) / DAY_LENGTH_MS) % 1;
-  // Smooth sinusoid: 0 at dawn/dusk boundary, peaks at 1 in the middle of the cycle (night).
+  // Smooth sinusoid: 0 at midday, peaks at 1 in the middle of the cycle (midnight).
   const nightFactor = (1 - Math.cos(2 * Math.PI * phase)) / 2;
   const root = document.documentElement.style;
-  root.setProperty('--sky-top', lerpColor(SKY_COLORS.day.top, SKY_COLORS.night.top, nightFactor));
-  root.setProperty('--sky-bottom', lerpColor(SKY_COLORS.day.bottom, SKY_COLORS.night.bottom, nightFactor));
-  root.setProperty('--sky-ground', lerpColor(SKY_COLORS.day.ground, SKY_COLORS.night.ground, nightFactor));
+  root.setProperty('--sky-top', skyColorAt('top', nightFactor));
+  root.setProperty('--sky-bottom', skyColorAt('bottom', nightFactor));
+  root.setProperty('--sky-ground', skyColorAt('ground', nightFactor));
+  root.setProperty('--night', (nightFactor * 0.8).toFixed(3));
+
+  // The sun rides an arc across the light half of the cycle, the moon across
+  // the dark half. Shifting the phase by a quarter puts each at its zenith
+  // exactly when the sky is brightest / darkest.
+  const q = (phase + 0.25) % 1;
+  const isNight = q > 0.5;
+  const arc = isNight ? (q - 0.5) / 0.5 : q / 0.5;
+  const body = document.getElementById('celestialBody');
+  if (body) {
+    // Arc through the clear sky strip above the UI, so it stays visible
+    // instead of passing behind the panels at its zenith.
+    const band = parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue('--sky-band'),
+    ) || 94;
+    body.style.left = `${(6 + arc * 88).toFixed(2)}%`;
+    body.style.top = `${(band * 0.56 - Math.sin(arc * Math.PI) * band * 0.42).toFixed(1)}px`;
+    body.classList.toggle('moon', isNight);
+  }
+
   currentNightFactor = nightFactor;
 }
 
+let lastCoinsShown = null;
+
 function renderTopbar() {
-  document.getElementById('coinsLabel').textContent = `💰 ${state.coins}`;
+  const coinsEl = document.getElementById('coinsLabel');
+  coinsEl.textContent = `💰 ${state.coins}`;
+  if (lastCoinsShown !== null && state.coins !== lastCoinsShown) {
+    coinsEl.classList.remove('pop');
+    void coinsEl.offsetWidth; // restart the animation
+    coinsEl.classList.add('pop');
+  }
+  lastCoinsShown = state.coins;
+
   const isNight = currentNightFactor > 0.5;
   document.getElementById('dayLabel').textContent = `${isNight ? '🌙 Night' : '☀️ Day'} ${state.day}`;
   document.getElementById('muteBtn').textContent = state.muted ? '🔇' : '🔊';
@@ -752,10 +916,18 @@ function checkAchievements() {
 
 function renderAchievements() {
   const list = document.getElementById('achievementsList');
-  list.innerHTML = '';
-  ACHIEVEMENTS.forEach((ach) => {
+
+  if (list.children.length !== ACHIEVEMENTS.length) {
+    list.innerHTML = '';
+    ACHIEVEMENTS.forEach(() => list.appendChild(document.createElement('div')));
+  }
+
+  ACHIEVEMENTS.forEach((ach, i) => {
     const unlocked = state.unlockedAchievements.includes(ach.id);
-    const card = document.createElement('div');
+    const card = list.children[i];
+    const sig = unlocked ? 'unlocked' : 'locked';
+    if (card.dataset.sig === sig) return;
+
     card.className = 'achievement-card' + (unlocked ? ' unlocked' : '');
     card.innerHTML = `
       <div class="achievement-emoji">${unlocked ? ach.emoji : '🔒'}</div>
@@ -763,7 +935,7 @@ function renderAchievements() {
       <div class="achievement-desc">${ach.description}</div>
       <div class="achievement-reward">${unlocked ? 'Earned' : 'Reward'}: ${ach.reward}💰</div>
     `;
-    list.appendChild(card);
+    card.dataset.sig = sig;
   });
 
   const progress = document.getElementById('achievementsProgress');

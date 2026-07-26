@@ -8,71 +8,93 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+
+  <!-- Parallax scenery behind the UI: sun/moon, drifting clouds, rolling hills. -->
+  <div class="scene" aria-hidden="true">
+    <div class="cloud cloud-a"></div>
+    <div class="cloud cloud-b"></div>
+    <div class="cloud cloud-c"></div>
+    <div class="hills">
+      <div class="hill hill-far"></div>
+      <div class="hill hill-mid"></div>
+      <div class="hill hill-near"></div>
+    </div>
+    <!-- Night falls on the scenery above, but not on the stars or the moon
+         that follow — those should stay bright against the dark sky. -->
+    <div class="scene-shade" id="sceneShade"></div>
+    <div class="stars"></div>
+    <div class="celestial" id="celestial"><div class="celestial-body" id="celestialBody"></div></div>
+  </div>
+
   <div id="app">
 
     <header class="topbar">
-      <h1 class="logo">🚜 Farm Life</h1>
+      <h1 class="logo"><span class="logo-icon">🚜</span> Farm Life</h1>
       <div class="stats">
-        <span id="coinsLabel">💰 0</span>
-        <span id="dayLabel">☀️ Day 1</span>
+        <span id="coinsLabel" class="coin-badge">💰 0</span>
+        <span id="dayLabel" class="day-badge">☀️ Day 1</span>
         <button id="muteBtn" class="mute-btn" title="Toggle sound"></button>
       </div>
     </header>
 
     <nav class="tabbar">
-      <button class="tab-btn active" data-tab="farm">🌾 Farm</button>
-      <button class="tab-btn" data-tab="animals">🐄 Animals</button>
-      <button class="tab-btn" data-tab="market">🛒 Market</button>
-      <button class="tab-btn" data-tab="achievements">🏆 Achievements</button>
+      <button class="tab-btn active" data-tab="farm"><span class="tab-icon">🌾</span> Farm</button>
+      <button class="tab-btn" data-tab="animals"><span class="tab-icon">🐄</span> Animals</button>
+      <button class="tab-btn" data-tab="market"><span class="tab-icon">🛒</span> Market</button>
+      <button class="tab-btn" data-tab="achievements"><span class="tab-icon">🏆</span> Awards</button>
     </nav>
 
     <!-- FARM TAB -->
-    <section id="farmTab" class="tab-screen">
+    <section id="farmTab" class="tab-screen field-screen">
       <div class="onboarding-banner hidden" id="onboardingBanner">
-        🌱 Pick a seed above, then click an empty plot to plant it. Come back once it's grown to harvest!
+        <span class="onboarding-text">🌱 Pick a seed below, then tap an empty plot to plant it. Come back once it's grown to harvest!</span>
         <button id="onboardingDismissBtn">Got it!</button>
       </div>
       <div class="seed-bar" id="seedBar"></div>
       <div class="plots-grid" id="plotsGrid"></div>
+      <div class="night-veil"></div>
     </section>
 
     <!-- ANIMALS TAB -->
-    <section id="animalsTab" class="tab-screen hidden">
+    <section id="animalsTab" class="tab-screen field-screen hidden">
       <div class="animal-group">
-        <h2>🐄 Cows</h2>
+        <h2 class="group-title">🐄 Cows</h2>
         <div class="animal-list" id="cowList"></div>
         <button class="buy-animal-btn" id="buyCowBtn"></button>
       </div>
       <div class="animal-group">
-        <h2>🐔 Chickens</h2>
+        <h2 class="group-title">🐔 Chickens</h2>
         <div class="animal-list" id="chickenList"></div>
         <button class="buy-animal-btn" id="buyChickenBtn"></button>
       </div>
       <div class="animal-group">
-        <h2>🐑 Sheep</h2>
+        <h2 class="group-title">🐑 Sheep</h2>
         <div class="animal-list" id="sheepList"></div>
         <button class="buy-animal-btn" id="buySheepBtn"></button>
       </div>
+      <div class="night-veil"></div>
     </section>
 
     <!-- MARKET TAB -->
     <section id="marketTab" class="tab-screen hidden">
-      <h2>Sell Goods</h2>
+      <h2 class="group-title">Sell Goods</h2>
       <div class="market-list" id="sellList"></div>
-      <h2>Inventory</h2>
+      <h2 class="group-title">Inventory</h2>
       <div class="inventory-list" id="inventoryList"></div>
-      <h2>Save Data</h2>
+      <h2 class="group-title">Save Data</h2>
       <div class="save-controls">
         <button id="downloadSaveBtn">⬇️ Download Save</button>
         <button id="loadSaveBtn">⬆️ Load Save</button>
         <input type="file" id="loadSaveInput" accept="application/json" class="hidden">
       </div>
+      <div class="night-veil"></div>
     </section>
 
     <!-- ACHIEVEMENTS TAB -->
     <section id="achievementsTab" class="tab-screen hidden">
-      <h2>🏆 Achievements <span id="achievementsProgress"></span></h2>
+      <h2 class="group-title">🏆 Achievements <span id="achievementsProgress"></span></h2>
       <div class="achievements-list" id="achievementsList"></div>
+      <div class="night-veil"></div>
     </section>
 
     <footer class="site-footer">
@@ -82,6 +104,7 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+  <div id="fxLayer" class="fx-layer" aria-hidden="true"></div>
 
 <script src="script.js"></script>
 </body>

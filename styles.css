@@ -1,524 +1,1394 @@
-* {
+/* ==================================================================
+   Farm Life — visual system
+   Chunky, warm, tactile styling in the spirit of mobile farm games.
+   Everything is CSS-generated: no image assets, no external fonts.
+   ================================================================== */
+
+*, *::before, *::after {
   box-sizing: border-box;
 }
 
+/* Animatable custom properties so the day/night sky can tween. */
 @property --sky-top {
   syntax: '<color>';
   inherits: true;
-  initial-value: #8fd3f4;
+  initial-value: #7ec8f0;
 }
 
 @property --sky-bottom {
   syntax: '<color>';
   inherits: true;
-  initial-value: #a1e3a1;
+  initial-value: #bfe6a8;
 }
 
 @property --sky-ground {
   syntax: '<color>';
   inherits: true;
-  initial-value: #cdeecb;
+  initial-value: #8fc96a;
 }
 
 :root {
-  --sky-top: #8fd3f4;
-  --sky-bottom: #a1e3a1;
-  --sky-ground: #cdeecb;
-  --panel: #fffaf0;
-  --panel-border: #d9c39a;
-  --wood: #a9714a;
-  --wood-dark: #7a4f30;
-  --soil: #6b4226;
-  --soil-light: #8a5a37;
-  --text: #3b2a1a;
-  --accent: #ffb347;
-  --accent-dark: #e0912a;
-  --good: #4caf50;
-  --bad: #e05555;
+  /* Sky (driven by JS through the day/night cycle) */
+  --sky-top: #7ec8f0;
+  --sky-bottom: #bfe6a8;
+  --sky-ground: #8fc96a;
+
+  /* Wood */
+  --wood: #b9793f;
+  --wood-light: #d29a5c;
+  --wood-mid: #a96c37;
+  --wood-dark: #7a4a22;
+  --wood-darker: #5b3517;
+
+  /* Parchment panels */
+  --parchment: #fffaec;
+  --parchment-deep: #f6e7c6;
+  --parchment-line: #e3cea1;
+
+  /* Grass / field */
+  --grass: #7cbf55;
+  --grass-dark: #5d9c3c;
+  --grass-deep: #4a8130;
+
+  /* Soil */
+  --soil: #8a5a30;
+  --soil-light: #a06d3c;
+  --soil-dark: #573520;
+  --soil-deepest: #3f2410;
+
+  /* Ink + accents */
+  --text: #4a3113;
+  --text-soft: #7a5c33;
+  --gold: #ffc63f;
+  --gold-dark: #d98f18;
+  --gold-deep: #a86400;
+  --good: #5fc74b;
+  --good-dark: #3d9330;
+  --good-deep: #2b6f21;
+  --bad: #ef5b4c;
+  --bad-dark: #c33a2d;
+
+  --radius: 18px;
+  --radius-sm: 12px;
+
+  /* Clear strip of sky above the UI that the sun/moon arcs through. */
+  --sky-band: 94px;
+  --celestial-size: 52px;
 }
 
 html, body {
   margin: 0;
   padding: 0;
   min-height: 100%;
-  font-family: "Segoe UI", "Trebuchet MS", Verdana, sans-serif;
+}
+
+body {
+  font-family: 'Trebuchet MS', 'Segoe UI', system-ui, -apple-system, sans-serif;
   color: var(--text);
-  background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-bottom) 45%, var(--sky-ground) 100%);
+  background: linear-gradient(180deg,
+    var(--sky-top) 0%,
+    var(--sky-top) 30%,
+    var(--sky-bottom) 62%,
+    var(--sky-ground) 100%);
   background-attachment: fixed;
-  transition: --sky-top 3s linear, --sky-bottom 3s linear, --sky-ground 3s linear;
-}
-
-#app {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 12px 16px 40px;
-  min-height: 100vh;
-}
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 16px;
-  background: rgba(255, 250, 240, 0.85);
-  border: 2px solid var(--panel-border);
-  border-radius: 14px;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-}
-
-.logo {
-  margin: 0;
-  font-size: 1.4rem;
-}
-
-.stats {
-  display: flex;
-  gap: 14px;
-  font-weight: 600;
-  font-size: 1.05rem;
-}
-
-#coinsLabel {
-  color: var(--accent-dark);
-}
-
-.mute-btn {
-  border: 2px solid var(--panel-border);
-  border-radius: 8px;
-  background: var(--panel);
-  font-size: 1rem;
-  line-height: 1;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-
-.tabbar {
-  display: flex;
-  gap: 8px;
-  margin: 14px 0;
-}
-
-.tab-btn {
-  flex: 1;
-  padding: 10px 8px;
-  font-size: 1rem;
-  font-weight: 600;
-  border: 2px solid var(--panel-border);
-  border-radius: 10px;
-  background: var(--panel);
-  color: var(--text);
-  cursor: pointer;
-  transition: transform 0.1s ease, background 0.15s ease;
-}
-
-.tab-btn:hover {
-  transform: translateY(-1px);
-}
-
-.tab-btn.active {
-  background: var(--accent);
-  border-color: var(--accent-dark);
-}
-
-.tab-screen {
-  background: rgba(255, 250, 240, 0.85);
-  border: 2px solid var(--panel-border);
-  border-radius: 14px;
-  padding: 16px;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  transition: --sky-top 1.5s linear, --sky-bottom 1.5s linear, --sky-ground 1.5s linear;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
 .hidden {
   display: none !important;
 }
 
-/* --- Farm tab --- */
+/* ==================================================================
+   Scenery — sun/moon, clouds, rolling hills behind the UI
+   ================================================================== */
+
+.scene {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Starfield — fades in with the night factor. */
+.stars {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 62vh;
+  opacity: var(--night, 0);
+  transition: opacity 1.4s linear;
+  background-image:
+    radial-gradient(1.6px 1.6px at 8% 22%, #fff, transparent),
+    radial-gradient(1.4px 1.4px at 17% 9%, #fff, transparent),
+    radial-gradient(1.8px 1.8px at 26% 31%, #fff, transparent),
+    radial-gradient(1.3px 1.3px at 34% 14%, #e8f0ff, transparent),
+    radial-gradient(1.6px 1.6px at 43% 27%, #fff, transparent),
+    radial-gradient(1.4px 1.4px at 52% 7%, #fff, transparent),
+    radial-gradient(1.7px 1.7px at 61% 19%, #e8f0ff, transparent),
+    radial-gradient(1.3px 1.3px at 69% 33%, #fff, transparent),
+    radial-gradient(1.6px 1.6px at 77% 11%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 86% 25%, #e8f0ff, transparent),
+    radial-gradient(1.4px 1.4px at 93% 15%, #fff, transparent),
+    radial-gradient(1.7px 1.7px at 4% 38%, #fff, transparent),
+    radial-gradient(1.3px 1.3px at 48% 41%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 88% 44%, #e8f0ff, transparent);
+  animation: twinkle 4.5s ease-in-out infinite;
+}
+
+@keyframes twinkle {
+  0%, 100% { filter: brightness(1); }
+  50%      { filter: brightness(0.62); }
+}
+
+/* Sun / moon. JS places it along an arc via inline left/top each tick. */
+.celestial {
+  position: absolute;
+  inset: 0;
+}
+
+.celestial-body {
+  position: absolute;
+  left: 50%;
+  top: 30px;
+  width: var(--celestial-size);
+  height: var(--celestial-size);
+  margin-left: calc(var(--celestial-size) / -2);
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #fff6c8, #ffd94a 46%, #ffb013 100%);
+  box-shadow:
+    0 0 0 12px rgba(255, 224, 120, 0.20),
+    0 0 44px 18px rgba(255, 206, 84, 0.42);
+  transition: left 1s linear, top 1s linear, background 2.5s linear, box-shadow 2.5s linear;
+}
+
+.celestial-body.moon {
+  background: radial-gradient(circle at 36% 32%, #ffffff, #dfe6f3 45%, #aab6cd 100%);
+  box-shadow:
+    0 0 0 12px rgba(200, 216, 245, 0.16),
+    0 0 40px 14px rgba(186, 205, 242, 0.34);
+}
+
+/* Soft craters, only visible on the moon. */
+.celestial-body.moon::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 62% 34%, rgba(140,156,186,.55) 0 7px, transparent 8px),
+    radial-gradient(circle at 38% 62%, rgba(140,156,186,.45) 0 5px, transparent 6px),
+    radial-gradient(circle at 68% 68%, rgba(140,156,186,.38) 0 4px, transparent 5px);
+}
+
+/* Chunky rounded clouds built from three overlapping blobs. */
+.cloud {
+  position: absolute;
+  width: 104px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 42px;
+  filter: blur(0.2px);
+  box-shadow: inset 0 -8px 0 rgba(196, 220, 240, 0.5);
+  opacity: 0.9;
+}
+
+.cloud::before,
+.cloud::after {
+  content: '';
+  position: absolute;
+  background: inherit;
+  border-radius: 50%;
+}
+
+.cloud::before {
+  width: 50px;
+  height: 50px;
+  left: 14px;
+  top: -22px;
+}
+
+.cloud::after {
+  width: 36px;
+  height: 36px;
+  right: 16px;
+  top: -14px;
+}
+
+/* Two clouds ride the clear sky strip; the third sits lower, where it only
+   shows in the side margins on wide screens. */
+.cloud-a { top: 30px; left: -180px; animation: drift 72s linear infinite; }
+.cloud-b { top: 62px; left: -180px; animation: drift 104s linear infinite 16s; opacity: 0.62; }
+.cloud-c { top: 34vh; left: -180px; animation: drift 132s linear infinite 40s; opacity: 0.5; }
+
+@keyframes drift {
+  from { transform: translateX(0) scale(var(--s, 1)); }
+  to   { transform: translateX(calc(100vw + 340px)) scale(var(--s, 1)); }
+}
+
+.cloud-a { --s: 1; }
+.cloud-b { --s: 0.72; }
+.cloud-c { --s: 1.25; }
+
+/* Layered hills along the bottom of the viewport. */
+.hills {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 42vh;
+}
+
+.hill {
+  position: absolute;
+  bottom: 0;
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+}
+
+.hill-far {
+  left: -14%;
+  width: 74%;
+  height: 74%;
+  background: linear-gradient(180deg, #96d073, #74b352);
+  opacity: 0.75;
+}
+
+.hill-mid {
+  right: -18%;
+  width: 84%;
+  height: 62%;
+  background: linear-gradient(180deg, #85c65f, #63a544);
+  opacity: 0.85;
+}
+
+.hill-near {
+  left: 8%;
+  width: 96%;
+  height: 44%;
+  background: linear-gradient(180deg, #79bd51, #55963a);
+}
+
+/* Darkens the whole scene at night; JS drives the opacity. */
+.scene-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(10, 18, 46, 0.55), rgba(8, 20, 38, 0.30));
+  opacity: var(--night, 0);
+  transition: opacity 1.4s linear;
+}
+
+/* ==================================================================
+   Layout shell
+   ================================================================== */
+
+#app {
+  position: relative;
+  z-index: 1;
+  max-width: 940px;
+  margin: 0 auto;
+  padding: calc(var(--sky-band) + 6px) 16px 48px;
+  min-height: 100vh;
+}
+
+/* ==================================================================
+   Top bar — a hanging wooden sign
+   ================================================================== */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 18px;
+  border-radius: var(--radius);
+  background:
+    repeating-linear-gradient(90deg, rgba(90, 52, 20, 0.10) 0 2px, transparent 2px 7px),
+    repeating-linear-gradient(90deg, rgba(255, 236, 200, 0.06) 0 1px, transparent 1px 13px),
+    linear-gradient(180deg, #c9884b 0%, #b16e37 55%, #9c5f2e 100%);
+  border: 3px solid var(--wood-darker);
+  box-shadow:
+    inset 0 3px 0 rgba(255, 226, 180, 0.28),
+    inset 0 -6px 12px rgba(70, 38, 12, 0.42),
+    0 7px 0 var(--wood-darker),
+    0 14px 24px rgba(46, 26, 8, 0.34);
+}
+
+.logo {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  color: #fff6e2;
+  text-shadow:
+    0 2px 0 rgba(88, 48, 16, 0.85),
+    0 4px 8px rgba(50, 26, 6, 0.5);
+}
+
+.logo-icon {
+  display: inline-block;
+  animation: tractorBob 3.2s ease-in-out infinite;
+}
+
+@keyframes tractorBob {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50%      { transform: translateY(-3px) rotate(2deg); }
+}
+
+.stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+}
+
+/* Gold coin pill with a sweeping shine. */
+.coin-badge {
+  position: relative;
+  overflow: hidden;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 1.05rem;
+  color: #5a3400;
+  background: linear-gradient(180deg, #ffe27a 0%, var(--gold) 52%, #f0a913 100%);
+  border: 2px solid var(--gold-deep);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.75),
+    0 3px 0 var(--gold-deep),
+    0 6px 10px rgba(60, 34, 0, 0.3);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+  transition: transform 0.18s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+.coin-badge::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  left: -60%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+  animation: shine 4.5s ease-in-out infinite;
+}
+
+@keyframes shine {
+  0%, 65%  { left: -60%; }
+  85%, 100% { left: 130%; }
+}
+
+/* Fires when the coin total changes. */
+.coin-badge.pop {
+  animation: coinPop 0.42s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+@keyframes coinPop {
+  0%   { transform: scale(1); }
+  38%  { transform: scale(1.22); }
+  100% { transform: scale(1); }
+}
+
+.day-badge {
+  padding: 6px 13px;
+  border-radius: 999px;
+  font-size: 0.98rem;
+  color: #fff4dd;
+  background: rgba(72, 40, 14, 0.42);
+  border: 2px solid rgba(58, 32, 10, 0.55);
+  box-shadow: inset 0 2px 0 rgba(255, 224, 176, 0.18);
+  text-shadow: 0 1px 2px rgba(40, 20, 4, 0.7);
+}
+
+.mute-btn {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 1.05rem;
+  line-height: 1;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(180deg, #e2a05f, #bd7736);
+  border: 2px solid var(--wood-darker);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 232, 198, 0.45),
+    0 3px 0 var(--wood-darker),
+    0 6px 9px rgba(50, 28, 8, 0.3);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.mute-btn:active {
+  transform: translateY(3px);
+  box-shadow: inset 0 2px 0 rgba(255, 232, 198, 0.35), 0 0 0 var(--wood-darker);
+}
+
+/* ==================================================================
+   Tab bar — chunky pressable tabs
+   ================================================================== */
+
+.tabbar {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.tab-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 11px 8px;
+  font-family: inherit;
+  font-size: 0.98rem;
+  font-weight: 800;
+  cursor: pointer;
+  color: #5a3a12;
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-deep) 100%);
+  border: 3px solid var(--wood-dark);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.8),
+    0 5px 0 var(--wood-dark),
+    0 9px 14px rgba(50, 28, 8, 0.22);
+  transition: transform 0.09s ease, box-shadow 0.09s ease, background 0.18s ease;
+}
+
+.tab-btn:hover {
+  transform: translateY(-1px);
+}
+
+.tab-btn:active {
+  transform: translateY(5px);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.6), 0 0 0 var(--wood-dark);
+}
+
+.tab-btn.active {
+  color: #5a3400;
+  background: linear-gradient(180deg, #ffe488 0%, var(--gold) 55%, #f2ab14 100%);
+  border-color: var(--gold-deep);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.7),
+    0 5px 0 var(--gold-deep),
+    0 9px 16px rgba(140, 84, 0, 0.32);
+}
+
+.tab-icon {
+  font-size: 1.05rem;
+}
+
+/* ==================================================================
+   Panels
+   ================================================================== */
+
+.tab-screen {
+  position: relative;
+  padding: 18px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-deep) 100%);
+  border: 5px solid var(--wood);
+  box-shadow:
+    0 0 0 3px var(--wood-darker),
+    inset 0 3px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -8px 18px rgba(190, 155, 96, 0.25),
+    0 10px 0 rgba(97, 58, 24, 0.35),
+    0 18px 34px rgba(46, 26, 8, 0.3);
+}
+
+/* Evening light washes over the panels too, so the play field doesn't stay
+   stuck at high noon while the world outside goes dark. */
+.tab-screen > .night-veil {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(24, 38, 92, 0.95), rgba(14, 30, 66, 0.95));
+  opacity: calc(var(--night, 0) * 0.42);
+  transition: opacity 1.4s linear;
+  mix-blend-mode: multiply;
+}
+
+/* Decorative nail heads in the panel corners. */
+.tab-screen::before,
+.tab-screen::after {
+  content: '';
+  position: absolute;
+  top: 9px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #fff3d6, #b98d4e 60%, #7d5a26);
+  box-shadow: 0 1px 2px rgba(60, 36, 10, 0.6);
+}
+
+.tab-screen::before { left: 11px; }
+.tab-screen::after  { right: 11px; }
+
+/* Outdoor panels get a grass interior instead of parchment. */
+.field-screen {
+  background:
+    radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.12) 0 2px, transparent 3px),
+    radial-gradient(circle at 72% 64%, rgba(255, 255, 255, 0.10) 0 2px, transparent 3px),
+    radial-gradient(circle at 44% 84%, rgba(255, 255, 255, 0.08) 0 2px, transparent 3px),
+    repeating-linear-gradient(58deg, rgba(255, 255, 255, 0.05) 0 3px, transparent 3px 9px),
+    linear-gradient(180deg, var(--grass) 0%, var(--grass-dark) 100%);
+  box-shadow:
+    0 0 0 3px var(--wood-darker),
+    inset 0 3px 0 rgba(255, 255, 255, 0.30),
+    inset 0 -10px 22px rgba(40, 82, 22, 0.4),
+    0 10px 0 rgba(97, 58, 24, 0.35),
+    0 18px 34px rgba(46, 26, 8, 0.3);
+}
+
+.group-title {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: var(--text);
+}
+
+.field-screen .group-title {
+  color: #fdffef;
+  text-shadow:
+    0 2px 0 rgba(46, 88, 26, 0.9),
+    0 4px 8px rgba(30, 62, 16, 0.5);
+}
+
+/* ==================================================================
+   Onboarding banner
+   ================================================================== */
 
 .onboarding-banner {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 10px 14px;
-  margin-bottom: 14px;
-  background: #fff3d6;
-  border: 2px solid var(--accent);
-  border-radius: 10px;
-  font-size: 0.9rem;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #5a3d10;
+  background: linear-gradient(180deg, #fff8dd, #ffedb4);
+  border: 3px solid var(--gold-dark);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.9),
+    0 4px 0 var(--gold-deep),
+    0 8px 14px rgba(90, 56, 0, 0.25);
+  animation: popIn 0.4s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+.onboarding-text {
+  flex: 1;
+  min-width: 190px;
 }
 
 .onboarding-banner button {
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: none;
-  background: var(--accent);
-  color: var(--text);
-  font-weight: 600;
+  padding: 8px 16px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 800;
   cursor: pointer;
+  color: #fff;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #6ed35a, var(--good-dark));
+  border: 2px solid var(--good-deep);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.45), 0 4px 0 var(--good-deep);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
 }
+
+.onboarding-banner button:active {
+  transform: translateY(4px);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.35), 0 0 0 var(--good-deep);
+}
+
+@keyframes popIn {
+  0%   { transform: scale(0.9) translateY(-6px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+/* ==================================================================
+   Seed bar
+   ================================================================== */
 
 .seed-bar {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .seed-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  border: 2px solid var(--wood-dark);
-  background: var(--wood);
-  color: #fff;
+  gap: 1px;
+  min-width: 84px;
+  padding: 9px 12px 8px;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
   cursor: pointer;
-  min-width: 76px;
-  font-size: 0.85rem;
+  color: #fff4e0;
+  border-radius: 14px;
+  background:
+    repeating-linear-gradient(90deg, rgba(80, 46, 16, 0.12) 0 2px, transparent 2px 8px),
+    linear-gradient(180deg, #c4874a 0%, #a86a33 100%);
+  border: 3px solid var(--wood-darker);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 230, 190, 0.35),
+    0 5px 0 var(--wood-darker),
+    0 9px 14px rgba(48, 26, 6, 0.3);
+  text-shadow: 0 1px 2px rgba(60, 32, 8, 0.75);
+  transition: transform 0.09s ease, box-shadow 0.09s ease;
+}
+
+.seed-btn:active:not(:disabled) {
+  transform: translateY(5px);
+  box-shadow: inset 0 2px 0 rgba(255, 230, 190, 0.3), 0 0 0 var(--wood-darker);
 }
 
 .seed-btn .seed-emoji {
-  font-size: 1.4rem;
+  font-size: 1.6rem;
+  line-height: 1.1;
+  filter: drop-shadow(0 2px 2px rgba(40, 20, 4, 0.45));
 }
 
 .seed-btn.selected {
-  background: var(--good);
-  border-color: #2e7d32;
+  color: #fffdf2;
+  background: linear-gradient(180deg, #7bd964 0%, var(--good-dark) 100%);
+  border-color: var(--good-deep);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.45),
+    0 5px 0 var(--good-deep),
+    0 0 0 4px rgba(255, 255, 255, 0.35),
+    0 10px 18px rgba(30, 90, 20, 0.4);
+  transform: translateY(-2px);
 }
 
 .seed-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
+  filter: grayscale(0.5);
 }
+
+/* ==================================================================
+   Plots — tilled soil tiles
+   ================================================================== */
 
 .plots-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
+  gap: 12px;
 }
 
 .plot {
+  position: relative;
   aspect-ratio: 1 / 1;
-  background: var(--soil);
-  border: 2px solid var(--soil-light);
-  border-radius: 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  font-size: 2.1rem;
   cursor: pointer;
-  position: relative;
-  font-size: 1.8rem;
   user-select: none;
-  transition: transform 0.1s ease;
+  border-radius: 14px;
+  /* Tilled earth: scattered clods over soft horizontal furrows. */
+  background:
+    radial-gradient(ellipse 7px 4px at 24% 22%, rgba(255, 224, 176, 0.16), transparent),
+    radial-gradient(ellipse 5px 3px at 70% 33%, rgba(255, 224, 176, 0.13), transparent),
+    radial-gradient(ellipse 8px 5px at 46% 63%, rgba(28, 13, 2, 0.22), transparent),
+    radial-gradient(ellipse 6px 4px at 82% 74%, rgba(28, 13, 2, 0.20), transparent),
+    radial-gradient(ellipse 6px 4px at 14% 76%, rgba(255, 224, 176, 0.11), transparent),
+    radial-gradient(ellipse 5px 3px at 60% 88%, rgba(255, 224, 176, 0.09), transparent),
+    repeating-linear-gradient(0deg,
+      rgba(255, 219, 170, 0.07) 0 2px,
+      rgba(0, 0, 0, 0) 2px 8px,
+      rgba(38, 18, 3, 0.17) 8px 12px,
+      rgba(0, 0, 0, 0) 12px 16px),
+    linear-gradient(180deg, #7b5230 0%, #653f1e 58%, #4d2e14 100%);
+  border: 3px solid #58351a;
+  box-shadow:
+    inset 0 3px 0 rgba(255, 214, 160, 0.16),
+    inset 0 -10px 16px rgba(45, 24, 5, 0.5),
+    0 6px 0 var(--soil-deepest),
+    0 11px 16px rgba(38, 20, 4, 0.35);
+  transition: transform 0.12s cubic-bezier(.34, 1.56, .64, 1), box-shadow 0.12s ease;
 }
 
 .plot:hover {
-  transform: scale(1.04);
+  transform: translateY(-3px);
+  box-shadow:
+    inset 0 3px 0 rgba(255, 214, 160, 0.2),
+    inset 0 -10px 16px rgba(45, 24, 5, 0.45),
+    0 9px 0 var(--soil-deepest),
+    0 15px 22px rgba(38, 20, 4, 0.4);
 }
 
+.plot:active {
+  transform: translateY(4px);
+  box-shadow:
+    inset 0 3px 0 rgba(255, 214, 160, 0.14),
+    inset 0 -8px 14px rgba(45, 24, 5, 0.5),
+    0 1px 0 var(--soil-deepest),
+    0 4px 8px rgba(38, 20, 4, 0.3);
+}
+
+/* Empty plots show a soft dashed target instead of a raw plus. */
 .plot.empty {
-  font-size: 1.4rem;
-  color: rgba(255,255,255,0.5);
+  font-size: 1.5rem;
+  color: rgba(255, 235, 205, 0.42);
+  text-shadow: 0 2px 3px rgba(40, 20, 4, 0.5);
 }
 
+.plot.empty::after {
+  content: '';
+  position: absolute;
+  inset: 12%;
+  border: 2px dashed rgba(255, 231, 196, 0.24);
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+/* Growing crops sway gently. */
+.plot .crop-sprite {
+  display: block;
+  filter: drop-shadow(0 3px 3px rgba(35, 18, 3, 0.55));
+  transform-origin: 50% 90%;
+  animation: sway 3.4s ease-in-out infinite;
+}
+
+@keyframes sway {
+  0%, 100% { transform: rotate(-4deg); }
+  50%      { transform: rotate(4deg); }
+}
+
+/* Ripe plots glow and bounce to pull the eye. */
 .plot.ready {
-  background: #8a6a2e;
-  animation: pulse 1s infinite;
+  background:
+    radial-gradient(circle at 50% 118%, rgba(255, 214, 110, 0.38), transparent 62%),
+    radial-gradient(ellipse 7px 4px at 24% 22%, rgba(255, 232, 190, 0.18), transparent),
+    radial-gradient(ellipse 8px 5px at 46% 63%, rgba(40, 20, 3, 0.20), transparent),
+    radial-gradient(ellipse 6px 4px at 82% 74%, rgba(40, 20, 3, 0.18), transparent),
+    repeating-linear-gradient(0deg,
+      rgba(255, 226, 180, 0.08) 0 2px,
+      rgba(0, 0, 0, 0) 2px 8px,
+      rgba(48, 24, 4, 0.15) 8px 12px,
+      rgba(0, 0, 0, 0) 12px 16px),
+    linear-gradient(180deg, #8f6033 0%, #77491f 58%, #5d3715 100%);
+  border-color: var(--gold-dark);
+  animation: readyGlow 1.5s ease-in-out infinite;
 }
 
-.plot.locked {
-  background: #4a3320;
-  border-style: dashed;
-  cursor: not-allowed;
-  font-size: 1.6rem;
-  color: rgba(255,255,255,0.6);
+.plot.ready .crop-sprite {
+  animation: readyBounce 0.9s ease-in-out infinite;
 }
 
-.plot.locked.unlockable {
-  cursor: pointer;
-  color: rgba(255,255,255,0.9);
-  border-color: var(--accent);
+@keyframes readyGlow {
+  0%, 100% {
+    box-shadow:
+      inset 0 3px 0 rgba(255, 224, 170, 0.2),
+      inset 0 -10px 16px rgba(45, 24, 5, 0.45),
+      0 6px 0 var(--soil-deepest),
+      0 0 0 0 rgba(255, 198, 63, 0.55),
+      0 11px 18px rgba(38, 20, 4, 0.35);
+  }
+  50% {
+    box-shadow:
+      inset 0 3px 0 rgba(255, 224, 170, 0.2),
+      inset 0 -10px 16px rgba(45, 24, 5, 0.45),
+      0 6px 0 var(--soil-deepest),
+      0 0 0 9px rgba(255, 198, 63, 0),
+      0 11px 18px rgba(38, 20, 4, 0.35);
+  }
 }
 
-.plot-lock-cost {
-  font-size: 0.7rem;
-  font-weight: 600;
+@keyframes readyBounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-6px) scale(1.06); }
 }
 
-@keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255,179,71,0.6); }
-  50% { box-shadow: 0 0 0 8px rgba(255,179,71,0); }
+/* Little "tap me" chevron over ripe crops. */
+.plot.ready::before {
+  content: '▾';
+  position: absolute;
+  top: 2px;
+  font-size: 0.95rem;
+  color: #fff2c4;
+  text-shadow: 0 2px 3px rgba(60, 34, 0, 0.7);
+  animation: nudge 0.9s ease-in-out infinite;
 }
 
+@keyframes nudge {
+  0%, 100% { transform: translateY(0); opacity: 0.85; }
+  50%      { transform: translateY(4px); opacity: 1; }
+}
+
+/* Growth progress bar sits along the bottom lip of the tile. */
 .plot-progress {
   position: absolute;
-  bottom: 4px;
-  left: 6px;
-  right: 6px;
-  height: 6px;
-  background: rgba(0,0,0,0.3);
-  border-radius: 4px;
+  bottom: 7px;
+  left: 9px;
+  right: 9px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(30, 15, 2, 0.55);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
 
 .plot-progress-fill {
   height: 100%;
-  background: var(--good);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #a4ef7f, var(--good-dark));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  transition: width 0.9s linear;
 }
 
-/* --- Animals tab --- */
+/* Locked plots read as fenced-off ground. */
+.plot.locked {
+  cursor: not-allowed;
+  font-size: 1.5rem;
+  color: rgba(255, 240, 214, 0.75);
+  background:
+    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.16) 0 8px, transparent 8px 16px),
+    linear-gradient(180deg, #6a4a2c 0%, #4e3520 100%);
+  border-style: dashed;
+  border-color: rgba(255, 232, 196, 0.4);
+  box-shadow:
+    inset 0 -8px 14px rgba(28, 14, 2, 0.55),
+    0 5px 0 #33200c,
+    0 9px 14px rgba(30, 16, 3, 0.32);
+}
+
+.plot.locked:hover {
+  transform: none;
+}
+
+.plot.locked.unlockable {
+  cursor: pointer;
+  border-color: var(--gold);
+  border-style: solid;
+  box-shadow:
+    inset 0 -8px 14px rgba(28, 14, 2, 0.5),
+    0 5px 0 #33200c,
+    0 0 0 3px rgba(255, 198, 63, 0.35),
+    0 10px 16px rgba(30, 16, 3, 0.35);
+  animation: unlockPulse 1.9s ease-in-out infinite;
+}
+
+.plot.locked.unlockable:hover {
+  transform: translateY(-3px);
+}
+
+@keyframes unlockPulse {
+  0%, 100% { filter: brightness(1); }
+  50%      { filter: brightness(1.18); }
+}
+
+.plot-lock-cost {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #ffe9ae;
+  text-shadow: 0 1px 2px rgba(30, 16, 2, 0.85);
+}
+
+/* ==================================================================
+   Animals
+   ================================================================== */
 
 .animal-group {
   margin-bottom: 22px;
 }
 
-.animal-group h2 {
-  margin: 0 0 10px;
+.animal-group:last-child {
+  margin-bottom: 0;
 }
 
 .animal-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
-  margin-bottom: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.animal-list p {
+  margin: 0;
+  padding: 10px 4px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #f2ffe4;
+  text-shadow: 0 1px 3px rgba(34, 68, 18, 0.8);
 }
 
 .animal-card {
-  background: var(--panel);
-  border: 2px solid var(--panel-border);
-  border-radius: 10px;
-  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 11px;
   text-align: center;
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-deep) 100%);
+  border: 3px solid var(--wood-dark);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.9),
+    0 5px 0 rgba(97, 58, 24, 0.5),
+    0 10px 16px rgba(46, 26, 8, 0.28);
+  animation: popIn 0.3s cubic-bezier(.34, 1.56, .64, 1);
 }
 
 .animal-emoji {
-  font-size: 2rem;
+  font-size: 2.4rem;
+  line-height: 1.15;
+  filter: drop-shadow(0 3px 3px rgba(60, 36, 10, 0.4));
+  animation: idleBob 2.6s ease-in-out infinite;
 }
 
+@keyframes idleBob {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-4px) scale(1.04); }
+}
+
+/* Push the action buttons to the bottom so cards in a row line up even when
+   one has an extra Sell button or a progress bar. */
 .animal-state {
+  margin: 5px 0 9px;
   font-size: 0.8rem;
-  margin: 4px 0 8px;
-  font-weight: 600;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  flex: 1;
 }
 
-.animal-state.hungry { color: var(--bad); }
-.animal-state.producing { color: var(--accent-dark); }
-.animal-state.ready { color: var(--good); }
+.animal-state.hungry   { color: var(--bad-dark); }
+.animal-state.producing { color: var(--gold-deep); }
+.animal-state.ready     { color: var(--good-deep); }
 
 .animal-progress {
-  height: 6px;
-  background: rgba(0,0,0,0.15);
-  border-radius: 4px;
+  height: 9px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  background: rgba(120, 90, 50, 0.28);
+  box-shadow: inset 0 1px 3px rgba(80, 52, 16, 0.5);
   overflow: hidden;
-  margin-bottom: 8px;
 }
 
 .animal-progress-fill {
   height: 100%;
-  background: var(--accent);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffdc74, var(--gold-dark));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition: width 0.9s linear;
 }
 
+/* Shared chunky button recipe for animal actions. */
 .animal-btn {
   width: 100%;
-  padding: 6px;
-  border-radius: 8px;
-  border: none;
-  font-weight: 600;
+  padding: 9px 6px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 800;
   cursor: pointer;
-  background: var(--good);
   color: #fff;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #6ed35a, var(--good-dark));
+  border: 2px solid var(--good-deep);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.4), 0 4px 0 var(--good-deep);
+  text-shadow: 0 1px 2px rgba(20, 70, 12, 0.6);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.animal-btn:active:not(:disabled) {
+  transform: translateY(4px);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.3), 0 0 0 var(--good-deep);
 }
 
 .animal-btn:disabled {
-  background: #b7b7b7;
   cursor: not-allowed;
+  color: #f4f0e6;
+  background: linear-gradient(180deg, #c3bdb0, #a49d8f);
+  border-color: #8b8477;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.3), 0 4px 0 #8b8477;
+  text-shadow: none;
 }
 
 .animal-btn-sell {
   width: 100%;
-  margin-top: 6px;
-  padding: 5px;
-  border-radius: 8px;
-  border: 1px solid var(--bad);
-  background: transparent;
-  color: var(--bad);
-  font-weight: 600;
-  font-size: 0.8rem;
+  margin-top: 7px;
+  padding: 6px 5px;
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 800;
   cursor: pointer;
+  color: var(--bad-dark);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fff6f4, #ffe2dd);
+  border: 2px solid var(--bad);
+  box-shadow: 0 3px 0 rgba(195, 58, 45, 0.5);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.animal-btn-sell:active {
+  transform: translateY(3px);
+  box-shadow: 0 0 0 rgba(195, 58, 45, 0.5);
 }
 
 .buy-animal-btn {
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 2px solid var(--wood-dark);
-  background: var(--wood);
-  color: #fff;
-  font-weight: 600;
+  padding: 11px 18px;
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 800;
   cursor: pointer;
+  color: #fff4e0;
+  border-radius: 13px;
+  background:
+    repeating-linear-gradient(90deg, rgba(80, 46, 16, 0.12) 0 2px, transparent 2px 8px),
+    linear-gradient(180deg, #c4874a 0%, #a86a33 100%);
+  border: 3px solid var(--wood-darker);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 230, 190, 0.35),
+    0 5px 0 var(--wood-darker),
+    0 9px 14px rgba(48, 26, 6, 0.3);
+  text-shadow: 0 1px 2px rgba(60, 32, 8, 0.75);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.buy-animal-btn:active:not(:disabled) {
+  transform: translateY(5px);
+  box-shadow: inset 0 2px 0 rgba(255, 230, 190, 0.3), 0 0 0 var(--wood-darker);
 }
 
 .buy-animal-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  filter: grayscale(0.55);
 }
 
-/* --- Market tab --- */
+/* ==================================================================
+   Market
+   ================================================================== */
 
 .market-list, .inventory-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
-  margin-bottom: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
 }
 
 .market-item, .inventory-item {
-  background: var(--panel);
-  border: 2px solid var(--panel-border);
-  border-radius: 10px;
-  padding: 10px;
+  padding: 12px 10px;
   text-align: center;
+  font-size: 0.86rem;
+  font-weight: 600;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fffdf6 0%, var(--parchment-deep) 100%);
+  border: 3px solid var(--parchment-line);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.9),
+    0 4px 0 rgba(200, 172, 118, 0.6),
+    0 8px 14px rgba(120, 90, 40, 0.18);
 }
 
 .market-item .item-emoji, .inventory-item .item-emoji {
-  font-size: 1.6rem;
+  font-size: 2rem;
+  line-height: 1.2;
+  margin-bottom: 2px;
+  filter: drop-shadow(0 2px 2px rgba(120, 90, 40, 0.35));
 }
 
 .market-item button {
-  margin-top: 6px;
   width: 100%;
-  padding: 6px;
-  border-radius: 8px;
-  border: none;
-  background: var(--accent);
-  color: var(--text);
-  font-weight: 600;
+  margin-top: 8px;
+  padding: 8px 5px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
   cursor: pointer;
+  color: #5a3400;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #ffe488, var(--gold));
+  border: 2px solid var(--gold-deep);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.6), 0 4px 0 var(--gold-deep);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.market-item button:active:not(:disabled) {
+  transform: translateY(4px);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.5), 0 0 0 var(--gold-deep);
 }
 
 .market-item button:disabled {
-  background: #ccc;
   cursor: not-allowed;
+  color: #f6f3ec;
+  background: linear-gradient(180deg, #ccc6b9, #ada697);
+  border-color: #948d80;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.28), 0 4px 0 #948d80;
 }
 
 .save-controls {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
 }
 
 .save-controls button {
-  padding: 8px 14px;
-  border-radius: 8px;
-  border: 2px solid var(--wood-dark);
-  background: var(--wood);
-  color: #fff;
-  font-weight: 600;
+  padding: 10px 16px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 800;
   cursor: pointer;
+  color: #fff4e0;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #c4874a 0%, #a86a33 100%);
+  border: 3px solid var(--wood-darker);
+  box-shadow: inset 0 2px 0 rgba(255, 230, 190, 0.35), 0 4px 0 var(--wood-darker);
+  text-shadow: 0 1px 2px rgba(60, 32, 8, 0.7);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
 }
 
-/* --- Achievements tab --- */
+.save-controls button:active {
+  transform: translateY(4px);
+  box-shadow: inset 0 2px 0 rgba(255, 230, 190, 0.3), 0 0 0 var(--wood-darker);
+}
+
+/* ==================================================================
+   Achievements
+   ================================================================== */
 
 #achievementsProgress {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--accent-dark);
+  font-size: 0.86rem;
+  font-weight: 800;
+  color: var(--gold-deep);
 }
 
 .achievements-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  gap: 12px;
 }
 
 .achievement-card {
-  background: var(--panel);
-  border: 2px solid var(--panel-border);
-  border-radius: 10px;
-  padding: 12px;
+  position: relative;
+  padding: 14px 12px;
   text-align: center;
-  opacity: 0.6;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #f4efe2 0%, #e6dcc6 100%);
+  border: 3px solid #cdbf9f;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.6), 0 4px 0 rgba(180, 162, 122, 0.55);
+  filter: saturate(0.35);
+  opacity: 0.75;
+  transition: transform 0.18s ease, filter 0.25s ease, opacity 0.25s ease;
 }
 
 .achievement-card.unlocked {
+  filter: none;
   opacity: 1;
-  border-color: var(--good);
-  box-shadow: 0 0 0 1px var(--good) inset;
+  background: linear-gradient(180deg, #fffbe9 0%, #ffeec2 100%);
+  border-color: var(--gold-dark);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.9),
+    0 5px 0 var(--gold-deep),
+    0 10px 18px rgba(150, 96, 0, 0.25);
+}
+
+/* Soft rays behind an earned badge. */
+.achievement-card.unlocked::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 74px;
+  height: 74px;
+  margin-left: -37px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 205, 80, 0.55), transparent 68%);
+  pointer-events: none;
 }
 
 .achievement-emoji {
-  font-size: 1.8rem;
+  position: relative;
+  font-size: 2.2rem;
+  line-height: 1.2;
+  filter: drop-shadow(0 2px 3px rgba(120, 82, 10, 0.4));
+}
+
+.achievement-card.unlocked .achievement-emoji {
+  animation: idleBob 3s ease-in-out infinite;
 }
 
 .achievement-name {
-  font-weight: 700;
-  margin: 4px 0 2px;
+  margin: 5px 0 3px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--text);
 }
 
 .achievement-desc {
-  font-size: 0.8rem;
-  color: rgba(59,42,26,0.75);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-soft);
 }
 
 .achievement-reward {
   font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--accent-dark);
+  font-weight: 800;
+  color: var(--gold-deep);
 }
 
 .achievement-card.unlocked .achievement-reward {
-  color: var(--good);
+  color: var(--good-deep);
 }
 
-.site-footer {
-  text-align: center;
-  margin-top: 20px;
-  font-size: 0.85rem;
-  color: rgba(59,42,26,0.8);
-}
-
-.site-footer a {
-  color: var(--wood-dark);
-  font-weight: 600;
-}
+/* ==================================================================
+   Toast + floating feedback
+   ================================================================== */
 
 .toast {
   position: fixed;
-  bottom: 20px;
   left: 50%;
+  bottom: 26px;
+  z-index: 40;
   transform: translateX(-50%);
-  background: rgba(59,42,26,0.9);
-  color: #fff;
-  padding: 8px 16px;
-  border-radius: 20px;
-  font-size: 0.9rem;
+  padding: 11px 22px;
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: #fff6e4;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #6b4520, #4a2d11);
+  border: 3px solid #35200b;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 220, 170, 0.25),
+    0 6px 0 rgba(30, 18, 4, 0.5),
+    0 14px 26px rgba(20, 10, 2, 0.45);
+  text-shadow: 0 1px 2px rgba(20, 10, 2, 0.8);
   pointer-events: none;
-  transition: opacity 0.3s ease;
   opacity: 1;
-  z-index: 20;
+  transition: opacity 0.3s ease, transform 0.3s cubic-bezier(.34, 1.56, .64, 1);
 }
 
 .toast.hidden {
+  /* Fade rather than vanish — override the global display:none. */
+  display: block !important;
   opacity: 0;
+  transform: translateX(-50%) translateY(12px);
+}
+
+/* Layer for "+3 🌾" numbers that float up from an action. */
+.fx-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.float-text {
+  position: absolute;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #fff8e0;
+  white-space: nowrap;
+  text-shadow:
+    0 2px 0 rgba(70, 40, 10, 0.9),
+    0 4px 10px rgba(30, 16, 2, 0.6);
+  transform: translate(-50%, 0);
+  animation: floatUp 1.15s ease-out forwards;
+}
+
+.float-text.gain  { color: #d9ffc4; }
+.float-text.coins { color: #ffe89a; }
+
+@keyframes floatUp {
+  0%   { opacity: 0; transform: translate(-50%, 6px) scale(0.8); }
+  22%  { opacity: 1; transform: translate(-50%, -8px) scale(1.12); }
+  100% { opacity: 0; transform: translate(-50%, -58px) scale(1); }
+}
+
+/* ==================================================================
+   Footer
+   ================================================================== */
+
+.site-footer {
+  display: inline-block;
+  margin: 22px 50% 0;
+  transform: translateX(-50%);
+  padding: 7px 18px;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fdffef;
+  border-radius: 999px;
+  background: rgba(56, 34, 12, 0.42);
+  text-shadow: 0 1px 3px rgba(30, 18, 4, 0.85);
+}
+
+.site-footer a {
+  color: #ffe9a8;
+  font-weight: 800;
+}
+
+@media (max-width: 560px) {
+  .site-footer {
+    white-space: normal;
+    display: block;
+    margin: 22px 0 0;
+    transform: none;
+  }
+}
+
+/* ==================================================================
+   Responsive
+   ================================================================== */
+
+@media (max-width: 620px) {
+  .logo { font-size: 1.2rem; }
+  .tab-btn { font-size: 0.86rem; padding: 10px 5px; }
+  .tab-icon { font-size: 0.95rem; }
 }
 
 @media (max-width: 480px) {
+  :root {
+    --sky-band: 66px;
+    --celestial-size: 38px;
+  }
+
+  #app { padding: calc(var(--sky-band) + 4px) 11px 40px; }
+
   .plots-grid {
     grid-template-columns: repeat(3, 1fr);
+    gap: 9px;
   }
+
+  .plot { font-size: 1.75rem; }
 
   .tabbar {
     flex-wrap: wrap;
+    gap: 7px;
   }
 
   .tab-btn {
-    flex: 1 1 calc(50% - 8px);
-    font-size: 0.9rem;
+    flex: 1 1 calc(50% - 7px);
+  }
+
+  .topbar { padding: 10px 12px; }
+  .stats { gap: 7px; }
+  .coin-badge, .day-badge { font-size: 0.9rem; padding: 5px 11px; }
+
+  .animal-list, .market-list, .inventory-list, .achievements-list {
+    grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+    gap: 9px;
+  }
+}
+
+/* Respect users who prefer less motion: keep state, drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
 }
