@@ -77,6 +77,17 @@ const PEST_RAID_MIN_MS = 120_000;
 const PEST_RAID_MAX_MS = 220_000;
 const RAID_STALE_MS = 60_000;
 
+/* Spoilage. A ripe crop keeps for two in-game days (three real minutes) before
+   it rots. That is long enough that ordinary play — feeding animals, selling,
+   browsing upgrades — never costs a harvest by accident, and short enough that
+   planting the whole field and wandering off does.
+   Crucially the clock only runs while the game is open: crops ripen on
+   absolute timestamps whether or not you are watching, so a real-time spoil
+   timer would rot the entire farm of anyone who closed the tab overnight. */
+const CROP_SPOIL_DAYS = 2;
+const CROP_SPOIL_MS = CROP_SPOIL_DAYS * DAY_LENGTH_MS;
+const CROP_WILT_FRACTION = 0.3; // last 30% of the window shows a warning
+
 const GOODS = {
   wheat: { emoji: '🌾', name: 'Wheat', sellPrice: CROPS.wheat.sellPrice },
   corn: { emoji: '🌽', name: 'Corn', sellPrice: CROPS.corn.sellPrice },
@@ -228,7 +239,7 @@ function cropYield(crop) {
 }
 
 function emptyPlot() {
-  return { crop: null, plantedAt: null };
+  return { crop: null, plantedAt: null, spoilsAt: null, rotten: false };
 }
 
 // How far along a plot is, 0 to 1. Every caller needs this and each was
@@ -238,6 +249,46 @@ function plotProgress(plot) {
   const crop = plot && CROPS[plot.crop];
   if (!crop || !Number.isFinite(plot.plantedAt)) return 0;
   return clamp01((nowSec() - plot.plantedAt) / cropGrowTime(crop));
+}
+
+/* How much of a ripe crop's shelf life is left, 1 down to 0. The clock is
+   started by the first tick that sees the crop ripe, and ticks only run while
+   the page is visible — so shelf life is measured in play time, not wall time. */
+function freshness(plot) {
+  if (!plot.crop || plot.rotten) return 0;
+  if (!Number.isFinite(plot.spoilsAt)) return 1;
+  return clamp01((plot.spoilsAt - Date.now()) / CROP_SPOIL_MS);
+}
+
+function isWilting(plot) {
+  return Number.isFinite(plot.spoilsAt) && freshness(plot) <= CROP_WILT_FRACTION;
+}
+
+// Shifts every shelf-life deadline later by an absence, so time spent with the
+// game closed never counts against a harvest.
+function shiftSpoilClocks(plots, byMs) {
+  if (!Number.isFinite(byMs) || byMs <= 0) return;
+  plots.forEach((plot) => {
+    if (Number.isFinite(plot.spoilsAt)) plot.spoilsAt += byMs;
+  });
+}
+
+function updateSpoilage() {
+  const now = Date.now();
+  let changed = false;
+  state.plots.forEach((plot) => {
+    if (!plot.crop || plot.rotten) return;
+    if (plotProgress(plot) < 1) return;
+    if (!Number.isFinite(plot.spoilsAt)) {
+      // First tick that sees it ripe starts the countdown.
+      plot.spoilsAt = now + CROP_SPOIL_MS;
+      changed = true;
+    } else if (now >= plot.spoilsAt) {
+      plot.rotten = true;
+      changed = true;
+    }
+  });
+  if (changed) saveState();
 }
 
 function animalProgress(animal, def) {
@@ -285,7 +336,12 @@ function migrateSave(parsed) {
     // Drop anything planted with a crop this build no longer defines.
     if (p.crop && !CROPS[p.crop]) return emptyPlot();
     if (p.crop && !Number.isFinite(p.plantedAt)) return emptyPlot();
-    return { crop: p.crop ?? null, plantedAt: p.plantedAt ?? null };
+    return {
+      crop: p.crop ?? null,
+      plantedAt: p.plantedAt ?? null,
+      spoilsAt: Number.isFinite(p.spoilsAt) ? p.spoilsAt : null,
+      rotten: Boolean(p.rotten),
+    };
   });
 
   ANIMAL_ORDER.forEach((kind) => {
@@ -340,6 +396,11 @@ function migrateSave(parsed) {
   // Saves from before the welcome-back summary have no lastSeenAt; treat those
   // players as having just arrived rather than reporting a bogus absence.
   if (!Number.isFinite(merged.lastSeenAt)) merged.lastSeenAt = Date.now();
+
+  // Shelf life is measured in play time, so hand back every millisecond this
+  // save spent closed. Without it, loading a save written last night — or
+  // importing one from another device — would rot the whole field on arrival.
+  shiftSpoilClocks(merged.plots, Date.now() - merged.lastSeenAt);
 
   return merged;
 }
@@ -643,8 +704,9 @@ function plotSignature(plot, idx) {
     return idx === state.unlockedPlots ? 'locked:next' : 'locked:far';
   }
   if (!plot.crop) return 'empty';
+  if (plot.rotten) return `rotten:${plot.crop}`;
   const progress = plotProgress(plot);
-  if (progress >= 1) return `ready:${plot.crop}`;
+  if (progress >= 1) return `${isWilting(plot) ? 'wilting' : 'ready'}:${plot.crop}`;
   return `grow:${plot.crop}:${plotGrowthStage(progress)}`;
 }
 
@@ -684,13 +746,37 @@ function buildPlotCell(cell, plot, idx, sig) {
 
     sprite.setAttribute('aria-hidden', 'true');
 
-    if (progress >= 1) {
+    if (plot.rotten) {
+      cell.classList.add('rotten');
+      sprite.textContent = '🥀';
+      cell.appendChild(sprite);
+      cell.title = `Rotten ${crop.name} — tap to clear`;
+      cell.setAttribute('aria-label', `${label}, ${crop.name} has rotted. Tap to clear it`);
+      cell.onclick = () => clearRottenPlot(idx);
+    } else if (progress >= 1) {
+      const wilting = isWilting(plot);
       cell.classList.add('ready');
+      if (wilting) cell.classList.add('wilting');
       sprite.textContent = crop.emoji;
       cell.appendChild(sprite);
       cell.title = `Harvest ${crop.name}`;
-      cell.setAttribute('aria-label', `${label}, ${crop.name} ready to harvest`);
+      cell.setAttribute(
+        'aria-label',
+        `${label}, ${crop.name} ready to harvest${wilting ? ', going off soon' : ''}`,
+      );
       cell.onclick = () => harvestPlot(idx);
+
+      // Doubles as the shelf-life gauge once a crop is ripe.
+      const bar = document.createElement('div');
+      bar.className = 'plot-progress';
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-label', `${crop.name} freshness`);
+      bar.setAttribute('aria-valuemin', '0');
+      bar.setAttribute('aria-valuemax', '100');
+      const fill = document.createElement('div');
+      fill.className = 'plot-progress-fill freshness';
+      bar.appendChild(fill);
+      cell.appendChild(bar);
     } else {
       const stage = plotGrowthStage(progress);
       sprite.textContent = stage === 0 ? '🌱' : stage === 1 ? '🌿' : crop.emoji;
@@ -736,11 +822,14 @@ function renderPlots() {
 
     // Progress is continuous, so it updates in place every tick.
     const fill = cell.querySelector('.plot-progress-fill');
-    if (fill && plot.crop) {
+    if (fill && plot.crop && !plot.rotten) {
       const crop = CROPS[plot.crop];
-      const percent = Math.round(plotProgress(plot) * 100);
+      const ripe = fill.classList.contains('freshness');
+      const percent = Math.round((ripe ? freshness(plot) : plotProgress(plot)) * 100);
       fill.style.width = `${percent}%`;
-      cell.title = `${crop.name} growing... ${percent}%`;
+      cell.title = ripe
+        ? `${crop.name} ready — ${percent}% fresh`
+        : `${crop.name} growing... ${percent}%`;
       fill.parentElement.setAttribute('aria-valuenow', String(percent));
     }
   });
@@ -768,9 +857,20 @@ function plantSeed(idx) {
   render();
 }
 
+function clearRottenPlot(idx) {
+  const plot = state.plots[idx];
+  if (!plot.crop || !plot.rotten) return;
+  const crop = CROPS[plot.crop];
+  state.plots[idx] = emptyPlot();
+  SFX.error();
+  showToast(`Cleared the rotten ${crop.name}`);
+  saveState();
+  render();
+}
+
 function harvestPlot(idx) {
   const plot = state.plots[idx];
-  if (!plot.crop) return;
+  if (!plot.crop || plot.rotten) return;
   const crop = CROPS[plot.crop];
   if (plotProgress(plot) < 1) return;
   const yielded = cropYield(crop);
@@ -779,8 +879,7 @@ function harvestPlot(idx) {
   SFX.harvest();
   spawnFloatText(`+${yielded} ${crop.emoji}`, document.getElementById('plotsGrid').children[idx], 'gain');
   showToast(`Harvested ${yielded}x ${crop.emoji} ${crop.name}`);
-  plot.crop = null;
-  plot.plantedAt = null;
+  state.plots[idx] = emptyPlot();
   saveState();
   render();
 }
@@ -995,7 +1094,7 @@ function resolvePestRaid() {
   }
   const planted = state.plots
     .map((plot, index) => ({ plot, index }))
-    .filter(({ plot }) => plot.crop && CROPS[plot.crop]);
+    .filter(({ plot }) => plot.crop && CROPS[plot.crop] && !plot.rotten);
   if (planted.length === 0) return;
 
   const hit = planted[Math.floor(Math.random() * planted.length)];
@@ -1577,6 +1676,7 @@ function tick() {
   // skipping the work costs no progress and it all catches up on return.
   if (document.hidden) return;
   updateDay();
+  updateSpoilage();
   updateRaids();
   render();
   state.lastSeenAt = Date.now();
@@ -1590,12 +1690,14 @@ function tick() {
 function adoptNewerSave() {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return;
+    if (!raw) return false;
     const stored = JSON.parse(raw);
     if (Number.isFinite(stored.lastSeenAt) && stored.lastSeenAt > (state.lastSeenAt || 0)) {
       state = migrateSave(stored);
+      return true;
     }
   } catch (e) { /* unreadable save: keep playing with what we have */ }
+  return false;
 }
 
 // Leaving the page is the moment progress is most likely to be lost, so
@@ -1609,7 +1711,10 @@ function handleVisibilityChange() {
     // notes queued against a context the OS has frozen.
     if (audioCtx && audioCtx.state === 'running') audioCtx.suspend().catch(() => {});
   } else {
-    adoptNewerSave();
+    // Shelf life only burns down while someone is actually playing, so hand
+    // back the time spent in the background. If we adopted another tab's save
+    // instead, migrateSave has already done that for its copy of the plots.
+    if (!adoptNewerSave()) shiftSpoilClocks(state.plots, Date.now() - state.lastSeenAt);
     // Push any raid that fell due while away out to a fresh interval.
     const now = Date.now();
     if (now >= state.nextWolfRaidAt) state.nextWolfRaidAt = scheduleRaid(WOLF_RAID_MIN_MS, WOLF_RAID_MAX_MS);

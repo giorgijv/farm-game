@@ -406,6 +406,125 @@ test.describe('guardians', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Spoilage                                                            */
+/* ------------------------------------------------------------------ */
+
+test.describe('spoilage', () => {
+  const CROP_SPOIL_MS = 2 * DAY_LENGTH_MS;
+
+  /** One ripe wheat plot, the rest empty. */
+  const ripeField = (plot = {}) => ([
+    { crop: 'wheat', plantedAt: secondsAgo(60), ...plot },
+    ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+  ]);
+
+  const firstPlot = (page) => page.locator('#plotsGrid > *').first();
+
+  /** Moves plot 0's deadline to a chosen point and runs the spoilage pass. */
+  const setDeadline = (page, at) => page.evaluate((t) => {
+    state.plots[0].spoilsAt = t;
+    updateSpoilage();
+    render();
+  }, at);
+
+  test('a ripe crop starts a shelf-life countdown', async ({ page }) => {
+    await load(page, makeSave({ plots: ripeField() }));
+
+    // The growth bar becomes a freshness gauge once the crop is ripe.
+    await expect(firstPlot(page).locator('.plot-progress-fill.freshness')).toHaveCount(1);
+
+    await expect.poll(async () => (await readSave(page)).plots[0].spoilsAt)
+      .toBeGreaterThan(Date.now());
+    const { spoilsAt } = (await readSave(page)).plots[0];
+    expect(spoilsAt).toBeLessThanOrEqual(Date.now() + CROP_SPOIL_MS);
+  });
+
+  test('the last stretch of shelf life is flagged as wilting', async ({ page }) => {
+    await load(page, makeSave({ plots: ripeField() }));
+    await expect(firstPlot(page)).toHaveClass(/ready/);
+
+    // Comfortably inside the final 30% of the window, but not past it.
+    await setDeadline(page, Date.now() + 0.15 * CROP_SPOIL_MS);
+
+    await expect(firstPlot(page)).toHaveClass(/wilting/);
+    await expect(firstPlot(page)).toHaveAttribute('aria-label', /going off soon/);
+  });
+
+  test('a crop left past its window rots and yields nothing', async ({ page }) => {
+    await load(page, makeSave({ inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 }, plots: ripeField() }));
+    await expect(firstPlot(page)).toHaveClass(/ready/);
+
+    await setDeadline(page, Date.now() - 1);
+
+    await expect(firstPlot(page)).toHaveClass(/rotten/);
+    expect((await readSave(page)).plots[0].rotten).toBe(true);
+
+    // Tapping it clears the plot rather than paying out a harvest.
+    await firstPlot(page).click();
+    const s = await readSave(page);
+    expect(s.inventory.wheat).toBe(0);
+    expect(s.stats.totalHarvested).toBe(0);
+    expect(s.plots[0]).toEqual({ crop: null, plantedAt: null, spoilsAt: null, rotten: false });
+    await expect(firstPlot(page)).toHaveClass(/empty/);
+  });
+
+  test('harvesting is refused once a crop has rotted', async ({ page }) => {
+    await load(page, makeSave({ plots: ripeField() }));
+    await setDeadline(page, Date.now() - 1);
+
+    // Bypass the click handler: even called directly, harvest must not pay out.
+    await page.evaluate(() => harvestPlot(0));
+    const s = await readSave(page);
+    expect(s.inventory.wheat).toBe(0);
+    expect(s.plots[0].crop).toBe('wheat');
+  });
+
+  test('shelf life does not burn down while the game is closed', async ({ page }) => {
+    const away = 20 * 60 * 1000;
+    await load(page, makeSave({
+      // Left the game with about half the window left; long gone since.
+      plots: ripeField({ spoilsAt: Date.now() - away + 0.5 * CROP_SPOIL_MS }),
+      lastSeenAt: Date.now() - away,
+      dayStartedAt: Date.now() - away,
+    }));
+
+    await expect(firstPlot(page)).toHaveClass(/ready/);
+    await expect(firstPlot(page)).not.toHaveClass(/rotten/);
+    const { spoilsAt } = (await readSave(page)).plots[0];
+    // The absence was handed back, so roughly half the window remains.
+    expect(spoilsAt - Date.now()).toBeGreaterThan(0.4 * CROP_SPOIL_MS);
+  });
+
+  test('a save from before spoilage keeps its ripe crops', async ({ page }) => {
+    await load(page, makeSave({
+      plots: [
+        { crop: 'pumpkin', plantedAt: secondsAgo(600) }, // no spoilsAt field at all
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+    }));
+
+    await expect(firstPlot(page)).toHaveClass(/ready/);
+    await expect(firstPlot(page)).not.toHaveClass(/rotten/);
+    // A fresh countdown starts from arrival rather than from planting.
+    await expect.poll(async () => (await readSave(page)).plots[0].spoilsAt)
+      .toBeGreaterThan(Date.now());
+  });
+
+  test('crows leave a rotten plot alone', async ({ page }) => {
+    await load(page, makeSave({ plots: ripeField() }));
+    await setDeadline(page, Date.now() - 1);
+
+    await page.evaluate(() => {
+      state.nextPestRaidAt = Date.now();
+      updateRaids();
+    });
+
+    // Nothing left for them to take, so the plot survives untouched.
+    expect((await readSave(page)).plots[0]).toMatchObject({ crop: 'wheat', rotten: true });
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Market + achievements                                               */
 /* ------------------------------------------------------------------ */
 
@@ -597,7 +716,7 @@ test.describe('save migration', () => {
     }));
 
     const s = await readSave(page);
-    expect(s.plots[0]).toEqual({ crop: null, plantedAt: null });
+    expect(s.plots[0]).toEqual({ crop: null, plantedAt: null, spoilsAt: null, rotten: false });
     expect(s.selectedSeed).toBeNull();
     expect(s.unlockedAchievements).toEqual(['first_harvest']);
   });

@@ -20,6 +20,12 @@ npm run serve     # http://localhost:4173
   empty plot. Crops grow through seed → sprout → ripe; tap a ripe plot to
   harvest. Eight of the sixteen plots start locked and are bought one at a
   time with coins.
+- **Spoilage** — a ripe crop keeps for two in-game days. The plot's bar
+  switches from growth to shelf life the moment it ripens, turning red with an
+  hourglass for the last third of the window; leave it past that and the crop
+  rots and has to be cleared for nothing. The countdown only runs while the
+  game is open, so closing the tab never costs a harvest — crops that ripen
+  while you are away are still waiting when you come back.
 - **Animals** — buy cows, chickens and sheep. Each eats its own food, and the
   bill scales with what it produces: a chicken cycle costs 3 coins of wheat
   and returns 5, a cow costs 12 of corn and returns 18, a sheep costs 20 of
@@ -95,9 +101,10 @@ npx playwright install chromium   # first run only
 npm test
 ```
 
-`tests/game.spec.js` covers the core loop, animal production, the market,
-upgrades, achievements, the day cycle, save loading/migration, the welcome-back
-summary, keyboard operability, and offline play. It also asserts that the
+`tests/game.spec.js` covers the core loop, animal production, guardians and
+raids, crop spoilage, the market, upgrades, achievements, the day cycle, save
+loading/migration, the welcome-back summary, keyboard operability, and offline
+play. It also asserts that the
 once-a-second render reuses DOM nodes, since rebuilding them would silently
 restart every CSS animation.
 
