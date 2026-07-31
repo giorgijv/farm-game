@@ -20,9 +20,18 @@ npm run serve     # http://localhost:4173
   empty plot. Crops grow through seed → sprout → ripe; tap a ripe plot to
   harvest. Eight of the sixteen plots start locked and are bought one at a
   time with coins.
-- **Animals** — buy cows, chickens and sheep. Feed each from your crop
-  inventory to start production, then collect milk, eggs or wool when the
-  timer finishes. Animals can be sold back for half their base price.
+- **Animals** — buy cows, chickens and sheep. Each eats its own food, and the
+  bill scales with what it produces: a chicken cycle costs 3 coins of wheat
+  and returns 5, a cow costs 12 of corn and returns 18, a sheep costs 20 of
+  carrot and returns 28. Feed one to start production, then collect milk,
+  eggs or wool when the timer finishes. Animals can be sold back for half
+  their base price.
+- **Guardians** — a **dog** (fed on eggs) chases off the wolves that
+  otherwise carry away livestock, and a **cat** (fed on milk) keeps crows
+  from eating planted crops. Both protect only while fed: a guardian works a
+  shift, then goes hungry and needs feeding again. Raids are infrequent and
+  jittered, and any that fall due while the game is closed are skipped rather
+  than resolved, so a farm is never wiped out overnight.
 - **Market** — sell produce for coins, review your holdings, adjust sound, and
   export or import your save. It also sells four permanent **upgrades** —
   faster crops, faster animals, larger harvests and better prices — each with

@@ -20,26 +20,62 @@ const CROPS = {
 
 const CROP_ORDER = ['wheat', 'corn', 'carrot', 'pumpkin'];
 
+// Livestock turn feed into goods; guardians turn feed into protection.
+//
+// Each animal eats one specific crop or good, and the bill scales with what it
+// produces: a chicken cycle costs 3 coins of wheat and returns 5, a cow costs
+// 12 of corn and returns 18, a sheep costs 20 of carrot and returns 28. Richer
+// produce is always the more expensive animal to keep, but never a loss.
 const ANIMALS = {
   cow: {
     name: 'Cow', emoji: '🐄', stateKey: 'cows', buyBaseCost: 100, costIncrement: 70,
-    feedAmount: 3, produceTime: 25, produceYield: 2,
-    produceKey: 'milk', produceEmoji: '🥛',
+    feed: { good: 'corn', amount: 2 },        // 12 coins
+    produceTime: 25, produceYield: 2,
+    produceKey: 'milk', produceEmoji: '🥛',   // 18 coins
   },
   chicken: {
     name: 'Chicken', emoji: '🐔', stateKey: 'chickens', buyBaseCost: 40, costIncrement: 25,
-    feedAmount: 1, produceTime: 15, produceYield: 1,
-    produceKey: 'egg', produceEmoji: '🥚',
+    feed: { good: 'wheat', amount: 1 },       // 3 coins
+    produceTime: 15, produceYield: 1,
+    produceKey: 'egg', produceEmoji: '🥚',    // 5 coins
   },
   sheep: {
-    name: 'Sheep', pluralName: 'sheep', emoji: '🐑', stateKey: 'sheep', buyBaseCost: 150, costIncrement: 90,
-    feedAmount: 4, produceTime: 35, produceYield: 2,
-    produceKey: 'wool', produceEmoji: '🧶',
+    name: 'Sheep', pluralName: 'sheep', emoji: '🐑', stateKey: 'sheep',
+    buyBaseCost: 150, costIncrement: 90,
+    feed: { good: 'carrot', amount: 2 },      // 20 coins
+    produceTime: 35, produceYield: 2,
+    produceKey: 'wool', produceEmoji: '🧶',   // 28 coins
+  },
+  dog: {
+    name: 'Dog', emoji: '🐕', stateKey: 'dogs', buyBaseCost: 180, costIncrement: 120,
+    feed: { good: 'egg', amount: 1 },
+    // A fed dog stands watch for this long, then wants feeding again.
+    produceTime: 150, produceYield: 0, produceKey: null,
+    guards: 'wolves',
+    role: 'Keeps wolves away from your livestock',
+  },
+  cat: {
+    name: 'Cat', emoji: '🐈', stateKey: 'cats', buyBaseCost: 160, costIncrement: 110,
+    feed: { good: 'milk', amount: 1 },
+    produceTime: 150, produceYield: 0, produceKey: null,
+    guards: 'pests',
+    role: 'Keeps crows off your crops',
   },
 };
 
-const ANIMAL_ORDER = ['cow', 'chicken', 'sheep'];
+const LIVESTOCK_ORDER = ['cow', 'chicken', 'sheep'];
+const GUARDIAN_ORDER = ['dog', 'cat'];
+const ANIMAL_ORDER = [...LIVESTOCK_ORDER, ...GUARDIAN_ORDER];
 const ANIMAL_SELL_REFUND_RATE = 0.5;
+
+/* Raids. Intervals are deliberately long and jittered so a farm is not under
+   constant siege, and anything that fell due while the tab was closed is
+   skipped rather than resolved — nobody should return to a wiped-out farm. */
+const WOLF_RAID_MIN_MS = 150_000;
+const WOLF_RAID_MAX_MS = 260_000;
+const PEST_RAID_MIN_MS = 120_000;
+const PEST_RAID_MAX_MS = 220_000;
+const RAID_STALE_MS = 60_000;
 
 const GOODS = {
   wheat: { emoji: '🌾', name: 'Wheat', sellPrice: CROPS.wheat.sellPrice },
@@ -109,7 +145,7 @@ const ACHIEVEMENTS = [
   {
     id: 'full_barn', emoji: '🧺', name: 'Full Barn', reward: 40,
     description: 'Own at least one cow, chicken, and sheep.',
-    check: (s) => ANIMAL_ORDER.every((kind) => s[ANIMALS[kind].stateKey].length >= 1),
+    check: (s) => LIVESTOCK_ORDER.every((kind) => s[ANIMALS[kind].stateKey].length >= 1),
   },
   {
     id: 'full_house', emoji: '🔓', name: 'Full House', reward: 100,
@@ -148,7 +184,11 @@ function freshState() {
     cows: [],
     chickens: [],
     sheep: [],
+    dogs: [],
+    cats: [],
     nextAnimalId: 1,
+    nextWolfRaidAt: Date.now() + WOLF_RAID_MIN_MS,
+    nextPestRaidAt: Date.now() + PEST_RAID_MIN_MS,
     inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
     stats: { totalHarvested: 0, totalCoinsEarned: 0 },
     unlockedAchievements: [],
@@ -289,6 +329,14 @@ function migrateSave(parsed) {
   merged.volume = Number.isFinite(merged.volume) ? Math.min(Math.max(merged.volume, 0), 1) : 0.7;
   merged.muted = Boolean(merged.muted);
   merged.onboarded = Boolean(merged.onboarded);
+  // Saves predating raids get a fresh clock rather than an immediate ambush.
+  if (!Number.isFinite(merged.nextWolfRaidAt) || merged.nextWolfRaidAt < Date.now()) {
+    merged.nextWolfRaidAt = Date.now() + WOLF_RAID_MIN_MS;
+  }
+  if (!Number.isFinite(merged.nextPestRaidAt) || merged.nextPestRaidAt < Date.now()) {
+    merged.nextPestRaidAt = Date.now() + PEST_RAID_MIN_MS;
+  }
+
   // Saves from before the welcome-back summary have no lastSeenAt; treat those
   // players as having just arrived rather than reporting a bogus absence.
   if (!Number.isFinite(merged.lastSeenAt)) merged.lastSeenAt = Date.now();
@@ -372,21 +420,14 @@ function spawnFloatText(text, anchorEl, variant) {
   setTimeout(() => el.remove(), 1250);
 }
 
-function pickCropToConsume(amount) {
-  // Prefer consuming the cheapest crop first, spread across types if needed.
-  const have = CROP_ORDER.reduce((sum, k) => sum + state.inventory[k], 0);
-  if (have < amount) return null;
-  const plan = {};
-  let remaining = amount;
-  for (const key of CROP_ORDER) {
-    if (remaining <= 0) break;
-    const take = Math.min(state.inventory[key], remaining);
-    if (take > 0) {
-      plan[key] = take;
-      remaining -= take;
-    }
-  }
-  return plan;
+/* Feeding is per-animal now: each one eats a specific good. */
+
+function canFeed(def) {
+  return (state.inventory[def.feed.good] || 0) >= def.feed.amount;
+}
+
+function feedLabel(def) {
+  return `Feed (${def.feed.amount} ${GOODS[def.feed.good].emoji})`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -749,10 +790,14 @@ function harvestPlot(idx) {
 /* ------------------------------------------------------------------ */
 
 function animalSignature(animal, def, ready) {
+  // A guardian on duty has no "ready" step — its shift just runs down.
+  if (def.guards) {
+    if (animal.state === 'producing') return 'onduty';
+    return `hungry:${canFeed(def) ? 'fed' : 'nofood'}`;
+  }
   if (ready) return 'ready';
   if (animal.state === 'producing') return 'producing';
-  const haveEnough = CROP_ORDER.reduce((sum, k) => sum + state.inventory[k], 0) >= def.feedAmount;
-  return `hungry:${haveEnough ? 'fed' : 'nofood'}`;
+  return `hungry:${canFeed(def) ? 'fed' : 'nofood'}`;
 }
 
 function buildAnimalCard(card, animal, kind, def, ready, sig) {
@@ -769,7 +814,7 @@ function buildAnimalCard(card, animal, kind, def, ready, sig) {
   const btn = document.createElement('button');
   btn.className = 'animal-btn';
 
-  if (ready) {
+  if (ready && !def.guards) {
     stateLabel.className = 'animal-state ready';
     stateLabel.textContent = `${def.produceEmoji} Ready!`;
     card.appendChild(stateLabel);
@@ -778,14 +823,15 @@ function buildAnimalCard(card, animal, kind, def, ready, sig) {
     btn.onclick = () => collectAnimal(kind, animal.id);
     card.appendChild(btn);
   } else if (animal.state === 'producing') {
-    stateLabel.className = 'animal-state producing';
-    stateLabel.textContent = 'Producing...';
+    const onDuty = Boolean(def.guards);
+    stateLabel.className = `animal-state ${onDuty ? 'onduty' : 'producing'}`;
+    stateLabel.textContent = onDuty ? '🛡️ On duty' : 'Producing...';
     card.appendChild(stateLabel);
 
     const bar = document.createElement('div');
     bar.className = 'animal-progress';
     bar.setAttribute('role', 'progressbar');
-    bar.setAttribute('aria-label', `${def.name} production`);
+    bar.setAttribute('aria-label', onDuty ? `${def.name} on duty` : `${def.name} production`);
     bar.setAttribute('aria-valuemin', '0');
     bar.setAttribute('aria-valuemax', '100');
     const fill = document.createElement('div');
@@ -793,7 +839,7 @@ function buildAnimalCard(card, animal, kind, def, ready, sig) {
     bar.appendChild(fill);
     card.appendChild(bar);
 
-    btn.textContent = 'Producing...';
+    btn.textContent = onDuty ? 'On duty' : 'Producing...';
     btn.disabled = true;
     card.appendChild(btn);
   } else {
@@ -801,9 +847,12 @@ function buildAnimalCard(card, animal, kind, def, ready, sig) {
     stateLabel.textContent = 'Hungry';
     card.appendChild(stateLabel);
 
-    const haveEnough = CROP_ORDER.reduce((sum, k) => sum + state.inventory[k], 0) >= def.feedAmount;
-    btn.textContent = `Feed (${def.feedAmount} ${def.feedAmount === 1 ? 'crop' : 'crops'})`;
-    btn.disabled = !haveEnough;
+    btn.textContent = feedLabel(def);
+    btn.disabled = !canFeed(def);
+    btn.setAttribute(
+      'aria-label',
+      `Feed this ${def.name} ${def.feed.amount} ${GOODS[def.feed.good].name}`,
+    );
     btn.onclick = () => feedAnimal(kind, animal.id);
     card.appendChild(btn);
 
@@ -868,18 +917,111 @@ function feedAnimal(kind, id) {
   const def = ANIMALS[kind];
   const animal = state[def.stateKey].find((a) => a.id === id);
   if (!animal || animal.state !== 'hungry') return;
-  const plan = pickCropToConsume(def.feedAmount);
-  if (!plan) {
+  if (!canFeed(def)) {
     SFX.error();
-    showToast('Not enough crops to feed!');
+    const good = GOODS[def.feed.good];
+    showToast(`A ${def.name} needs ${def.feed.amount} ${good.name}!`);
     return;
   }
-  Object.entries(plan).forEach(([k, amt]) => { state.inventory[k] -= amt; });
+  state.inventory[def.feed.good] -= def.feed.amount;
   animal.state = 'producing';
   animal.feedAt = nowSec();
   SFX.feed();
   saveState();
   render();
+}
+
+/* ------------------------------------------------------------------ */
+/* Guardians and raids                                                   */
+/* ------------------------------------------------------------------ */
+
+// A guardian is only protecting while its last meal lasts.
+function isOnDuty(kind) {
+  const def = ANIMALS[kind];
+  return state[def.stateKey].some(
+    (a) => a.state === 'producing' && animalProgress(a, def) < 1,
+  );
+}
+
+// Guardians have no produce to collect, so their shift simply ends.
+function updateGuardians() {
+  let changed = false;
+  GUARDIAN_ORDER.forEach((kind) => {
+    const def = ANIMALS[kind];
+    state[def.stateKey].forEach((a) => {
+      if (a.state === 'producing' && animalProgress(a, def) >= 1) {
+        a.state = 'hungry';
+        a.feedAt = null;
+        changed = true;
+      }
+    });
+  });
+  if (changed) saveState();
+}
+
+function scheduleRaid(minMs, maxMs) {
+  return Date.now() + minMs + Math.random() * (maxMs - minMs);
+}
+
+function pluralOf(def) {
+  return def.pluralName || `${def.name.toLowerCase()}s`;
+}
+
+function resolveWolfRaid() {
+  if (isOnDuty('dog')) {
+    SFX.collect();
+    showToast('🐕 Your dog chased off a wolf!');
+    return;
+  }
+  const herd = [];
+  LIVESTOCK_ORDER.forEach((kind) => {
+    state[ANIMALS[kind].stateKey].forEach((animal) => herd.push({ kind, id: animal.id }));
+  });
+  if (herd.length === 0) return; // nothing out there to take
+
+  const taken = herd[Math.floor(Math.random() * herd.length)];
+  const def = ANIMALS[taken.kind];
+  const list = state[def.stateKey];
+  list.splice(list.findIndex((a) => a.id === taken.id), 1);
+  SFX.error();
+  showToast(`🐺 A wolf took one of your ${pluralOf(def)}!`);
+}
+
+function resolvePestRaid() {
+  if (isOnDuty('cat')) {
+    SFX.collect();
+    showToast('🐈 Your cat saw off the crows!');
+    return;
+  }
+  const planted = state.plots
+    .map((plot, index) => ({ plot, index }))
+    .filter(({ plot }) => plot.crop && CROPS[plot.crop]);
+  if (planted.length === 0) return;
+
+  const hit = planted[Math.floor(Math.random() * planted.length)];
+  const crop = CROPS[hit.plot.crop];
+  state.plots[hit.index] = emptyPlot();
+  SFX.error();
+  showToast(`🐦 Crows ate your ${crop.name}!`);
+}
+
+// Raids that came due while the tab was closed are rescheduled rather than
+// resolved, so an overnight break cannot wipe a farm out.
+function updateRaids() {
+  const now = Date.now();
+  let changed = false;
+
+  if (now >= state.nextWolfRaidAt) {
+    if (now - state.nextWolfRaidAt < RAID_STALE_MS) resolveWolfRaid();
+    state.nextWolfRaidAt = scheduleRaid(WOLF_RAID_MIN_MS, WOLF_RAID_MAX_MS);
+    changed = true;
+  }
+  if (now >= state.nextPestRaidAt) {
+    if (now - state.nextPestRaidAt < RAID_STALE_MS) resolvePestRaid();
+    state.nextPestRaidAt = scheduleRaid(PEST_RAID_MIN_MS, PEST_RAID_MAX_MS);
+    changed = true;
+  }
+  if (changed) saveState();
 }
 
 function collectAnimal(kind, id) {
@@ -1067,6 +1209,8 @@ function renderMarket() {
     { emoji: '🐄', name: 'Cows', value: state.cows.length },
     { emoji: '🐔', name: 'Chickens', value: state.chickens.length },
     { emoji: '🐑', name: 'Sheep', value: state.sheep.length },
+    { emoji: '🐕', name: 'Dogs', value: state.dogs.length },
+    { emoji: '🐈', name: 'Cats', value: state.cats.length },
     { emoji: '🌱', name: 'Plots planted', value: state.plots.filter((p) => p.crop).length + ' / ' + state.unlockedPlots },
     { emoji: '🔓', name: 'Plots unlocked', value: state.unlockedPlots + ' / ' + PLOT_COUNT },
   ];
@@ -1410,6 +1554,7 @@ function renderAchievements() {
 /* ------------------------------------------------------------------ */
 
 function render() {
+  updateGuardians();
   checkAchievements();
   renderTopbar();
   if (activeTab === 'farm') {
@@ -1432,6 +1577,7 @@ function tick() {
   // skipping the work costs no progress and it all catches up on return.
   if (document.hidden) return;
   updateDay();
+  updateRaids();
   render();
   state.lastSeenAt = Date.now();
   saveState();
@@ -1464,6 +1610,10 @@ function handleVisibilityChange() {
     if (audioCtx && audioCtx.state === 'running') audioCtx.suspend().catch(() => {});
   } else {
     adoptNewerSave();
+    // Push any raid that fell due while away out to a fresh interval.
+    const now = Date.now();
+    if (now >= state.nextWolfRaidAt) state.nextWolfRaidAt = scheduleRaid(WOLF_RAID_MIN_MS, WOLF_RAID_MAX_MS);
+    if (now >= state.nextPestRaidAt) state.nextPestRaidAt = scheduleRaid(PEST_RAID_MIN_MS, PEST_RAID_MAX_MS);
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
     syncMusic();
     updateDay();

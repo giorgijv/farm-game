@@ -1017,6 +1017,16 @@ body {
   margin-bottom: 0;
 }
 
+/* Explains what a guardian is for, above its pen. */
+.group-note {
+  margin: -6px 0 10px;
+  max-width: 46ch;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #f2ffe4;
+  text-shadow: 0 1px 3px rgba(34, 68, 18, 0.85);
+}
+
 .animal-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
@@ -1071,6 +1081,7 @@ body {
 }
 
 .animal-state.hungry   { color: var(--bad-dark); }
+.animal-state.onduty   { color: #2f6ea8; }
 .animal-state.producing { color: var(--gold-deep); }
 .animal-state.ready     { color: var(--good-deep); }
 

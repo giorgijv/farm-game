@@ -112,7 +112,7 @@ test.describe('phone portrait', () => {
         { crop: 'wheat', plantedAt: Date.now() / 1000 - 20 }, // ripe
         ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
       ],
-      inventory: { wheat: 5, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
+      inventory: { wheat: 5, corn: 4, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
       unlockedAchievements: ['first_harvest'], // keep the coin maths clean
     }));
 
@@ -125,18 +125,18 @@ test.describe('phone portrait', () => {
     await page.locator('#plotsGrid .plot.empty').first().tap();
     await expect.poll(async () => (await readSave(page)).coins).toBe(895);
 
-    // Feed the cow by tap: eats 3 crops, leaving 5 wheat.
+    // Feed the cow by tap: eats 2 corn, leaving 2.
     await page.locator('button[data-tab="animals"]').tap();
     await page.locator('#cowList .animal-btn').tap();
     await expect(page.locator('#cowList .animal-state.producing')).toHaveCount(1);
-    await expect.poll(async () => (await readSave(page)).inventory.wheat).toBe(5);
+    await expect.poll(async () => (await readSave(page)).inventory.corn).toBe(2);
 
-    // Sell the rest by tap: 5 x 3 coins.
+    // Sell the wheat by tap: 8 x 3 coins.
     await page.locator('button[data-tab="market"]').tap();
     const wheat = page.locator('#sellList .market-item').filter({ hasText: 'Wheat' });
     await wheat.getByRole('button').tap();
     await expect(wheat.locator('.market-have')).toHaveText('Have: 0');
-    await expect.poll(async () => (await readSave(page)).coins).toBe(910);
+    await expect.poll(async () => (await readSave(page)).coins).toBe(919);
   });
 
   test('all four seeds fit on one row', async ({ page }) => {
