@@ -50,7 +50,7 @@ async function load(page, save = makeSave()) {
 const readSave = (page) =>
   page.evaluate((k) => JSON.parse(localStorage.getItem(k)), SAVE_KEY);
 
-const TABS = ['farm', 'animals', 'market', 'achievements'];
+const TABS = ['farm', 'animals', 'market', 'achievements', 'dream'];
 
 /** Every visible, enabled control smaller than the 44px accessibility floor. */
 async function undersizedControls(page) {

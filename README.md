@@ -1,7 +1,8 @@
 # 🚜 Farm Life
 
 A browser farming game. Plant and harvest crops, raise cows, chickens and
-sheep, and sell what you produce at the market to expand the farm.
+sheep, and sell what you produce at the market to expand the farm — until you
+can afford a country house, or hold out for the villa.
 
 Play it at **https://giorgijv.github.io/farm-game/**
 
@@ -51,6 +52,12 @@ npm run serve     # http://localhost:4173
   somewhere to go.
 - **Awards** — eleven achievements covering harvesting, livestock, expansion
   and wealth, each paying a one-off coin reward.
+- **Dream** — the two grand goals everything else builds towards: a **Country
+  House** for 20,000 coins or a **Grand Villa** for 40,000. They are strictly
+  either/or — buying one takes the other off the market for good, so the run
+  ends on a choice between cashing out early and holding out for twice the
+  price. Both cards show live progress towards their price, and the purchase
+  asks for confirmation because it cannot be undone.
 
 Sound effects and the background music loop are synthesised with the Web Audio
 API — there are no audio files. Music, volume and a master mute live under
@@ -109,8 +116,8 @@ npm test
 
 `tests/game.spec.js` covers the core loop, animal production, guardians and
 raids, crop spoilage, animal starvation, the market, upgrades, achievements,
-the day cycle, save loading/migration, the welcome-back summary, keyboard
-operability, and offline play. It also asserts that the
+the two dream homes, the day cycle, save loading/migration, the welcome-back
+summary, keyboard operability, and offline play. It also asserts that the
 once-a-second render reuses DOM nodes, since rebuilding them would silently
 restart every CSS animation.
 

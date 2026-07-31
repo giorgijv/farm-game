@@ -1078,6 +1078,126 @@ test.describe('upgrades', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Dream homes — the two grand goals                                   */
+/* ------------------------------------------------------------------ */
+
+test.describe('dream homes', () => {
+  const HOUSE_COST = 20000;
+  const VILLA_COST = 40000;
+
+  /** Awards pre-unlocked so their coin rewards stay out of the arithmetic. */
+  const dreamSave = (o = {}) => makeSave({ unlockedAchievements: [...ACHIEVEMENT_IDS], ...o });
+
+  const openDream = (page) => page.getByRole('button', { name: /Dream/ }).click();
+  const card = (page, i) => page.locator('#dreamList > *').nth(i);
+  const houseBtn = (page) => card(page, 0).locator('.dream-btn');
+  const villaBtn = (page) => card(page, 1).locator('.dream-btn');
+
+  /** window.confirm defaults to dismissed under Playwright. */
+  const acceptConfirms = (page) => page.on('dialog', (d) => d.accept());
+
+  test('both goals are listed with their prices', async ({ page }) => {
+    await load(page, dreamSave({ coins: 0 }));
+    await openDream(page);
+
+    await expect(page.locator('#dreamList > *')).toHaveCount(2);
+    await expect(card(page, 0)).toContainText('Country House');
+    await expect(card(page, 0)).toContainText('20,000💰');
+    await expect(card(page, 1)).toContainText('Grand Villa');
+    await expect(card(page, 1)).toContainText('40,000💰');
+  });
+
+  test('neither can be bought without the coins', async ({ page }) => {
+    await load(page, dreamSave({ coins: HOUSE_COST - 1 }));
+    await openDream(page);
+
+    await expect(houseBtn(page)).toBeDisabled();
+    await expect(villaBtn(page)).toBeDisabled();
+    expect((await readSave(page)).dreamHome).toBeNull();
+  });
+
+  test('savings progress is shown against each goal', async ({ page }) => {
+    await load(page, dreamSave({ coins: 10000 }));
+    await openDream(page);
+
+    // Halfway to the house, a quarter of the way to the villa.
+    await expect(card(page, 0).locator('.dream-progress')).toHaveAttribute('aria-valuenow', '50');
+    await expect(card(page, 1).locator('.dream-progress')).toHaveAttribute('aria-valuenow', '25');
+  });
+
+  test('buying the house ends the run and takes the villa off the market', async ({ page }) => {
+    acceptConfirms(page);
+    await load(page, dreamSave({ coins: HOUSE_COST + 500 }));
+    await openDream(page);
+
+    await expect(houseBtn(page)).toBeEnabled();
+    await houseBtn(page).click();
+
+    await expect(page.locator('#toast')).toContainText('You bought the Country House');
+    const s = await readSave(page);
+    expect(s.dreamHome).toBe('house');
+    expect(s.coins).toBe(500);
+
+    await expect(card(page, 0)).toHaveClass(/owned/);
+    await expect(houseBtn(page)).toHaveText('🎉 Yours!');
+    await expect(card(page, 1)).toHaveClass(/forfeited/);
+    await expect(villaBtn(page)).toBeDisabled();
+    await expect(villaBtn(page)).toHaveText('No longer available');
+  });
+
+  test('the villa is the other way to finish', async ({ page }) => {
+    acceptConfirms(page);
+    await load(page, dreamSave({ coins: VILLA_COST }));
+    await openDream(page);
+
+    // With villa money in hand, both are affordable — it is a real choice.
+    await expect(houseBtn(page)).toBeEnabled();
+    await villaBtn(page).click();
+
+    const s = await readSave(page);
+    expect(s.dreamHome).toBe('villa');
+    expect(s.coins).toBe(0);
+    await expect(card(page, 1)).toHaveClass(/owned/);
+    await expect(card(page, 0)).toHaveClass(/forfeited/);
+  });
+
+  test('declining the confirmation leaves the coins alone', async ({ page }) => {
+    page.on('dialog', (d) => d.dismiss());
+    await load(page, dreamSave({ coins: HOUSE_COST }));
+    await openDream(page);
+
+    await houseBtn(page).click();
+    await page.waitForTimeout(300);
+
+    const s = await readSave(page);
+    expect(s.dreamHome).toBeNull();
+    expect(s.coins).toBe(HOUSE_COST);
+  });
+
+  test('a second home cannot be bought after the first', async ({ page }) => {
+    acceptConfirms(page);
+    await load(page, dreamSave({ coins: VILLA_COST + HOUSE_COST, dreamHome: 'house' }));
+    await openDream(page);
+
+    // Even called directly, with the coins in hand, the goal stays settled.
+    await page.evaluate(() => buyDreamHome('villa'));
+    const s = await readSave(page);
+    expect(s.dreamHome).toBe('house');
+    expect(s.coins).toBe(VILLA_COST + HOUSE_COST);
+  });
+
+  test('the choice survives a reload, and a bogus one is discarded', async ({ page }) => {
+    await load(page, dreamSave({ coins: 10, dreamHome: 'villa' }));
+    await openDream(page);
+    await expect(card(page, 1)).toHaveClass(/owned/);
+    expect((await readSave(page)).dreamHome).toBe('villa');
+
+    await load(page, dreamSave({ coins: 10, dreamHome: 'mansion' }));
+    expect((await readSave(page)).dreamHome).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Sound settings                                                      */
 /* ------------------------------------------------------------------ */
 

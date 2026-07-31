@@ -133,6 +133,27 @@ const UPGRADES = {
 
 const UPGRADE_ORDER = ['sprinkler', 'feed', 'fertiliser', 'contacts'];
 
+/* The two grand goals the whole farm builds towards. They are deliberately
+   either/or: buying one takes the other off the market for good, so the run
+   ends on a choice — cash out early into the cottage, or keep farming for the
+   villa. Everything else in the game is a step towards affording one. */
+const DREAM_HOMES = {
+  house: {
+    name: 'Country House', emoji: '🏡', cost: 20000,
+    tagline: 'A warm stone cottage at the top of the meadow.',
+    describe: 'The sensible dream. Reachable in one good farming run, with a '
+      + 'porch that looks out over every plot you ever unlocked.',
+  },
+  villa: {
+    name: 'Grand Villa', emoji: '🏰', cost: 40000,
+    tagline: 'Cypress avenue, fountain, the lot.',
+    describe: 'Twice the price and twice the bragging rights. Holding out for '
+      + 'this one means a much longer haul — and passing up the cottage.',
+  },
+};
+
+const DREAM_ORDER = ['house', 'villa'];
+
 const ACHIEVEMENTS = [
   {
     id: 'first_harvest', emoji: '🌱', name: 'First Harvest', reward: 10,
@@ -215,6 +236,7 @@ function freshState() {
     stats: { totalHarvested: 0, totalCoinsEarned: 0 },
     unlockedAchievements: [],
     upgrades: { sprinkler: 0, feed: 0, fertiliser: 0, contacts: 0 },
+    dreamHome: null,
     muted: false,
     musicOn: true,
     volume: 0.7,
@@ -478,6 +500,8 @@ function migrateSave(parsed) {
   merged.upgrades = upgrades;
 
   if (merged.selectedSeed && !CROPS[merged.selectedSeed]) merged.selectedSeed = null;
+  // An unknown dream home would leave the goal permanently unclaimable.
+  if (!DREAM_HOMES[merged.dreamHome]) merged.dreamHome = null;
   merged.musicOn = merged.musicOn !== false;
   merged.volume = Number.isFinite(merged.volume) ? Math.min(Math.max(merged.volume, 0), 1) : 0.7;
   merged.muted = Boolean(merged.muted);
@@ -735,6 +759,7 @@ function setActiveTab(tab) {
   document.getElementById('animalsTab').classList.toggle('hidden', tab !== 'animals');
   document.getElementById('marketTab').classList.toggle('hidden', tab !== 'market');
   document.getElementById('achievementsTab').classList.toggle('hidden', tab !== 'achievements');
+  document.getElementById('dreamTab').classList.toggle('hidden', tab !== 'dream');
   render();
 }
 
@@ -1764,6 +1789,133 @@ function renderAchievements() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Dream tab — the two grand goals                                      */
+/* ------------------------------------------------------------------ */
+
+function renderDream() {
+  const intro = document.getElementById('dreamIntro');
+  const owned = state.dreamHome;
+
+  intro.textContent = owned
+    ? `You bought the ${DREAM_HOMES[owned].name}. The farm keeps running — `
+      + 'this one is yours for good.'
+    : 'Two ways to finish the story, and you only ever get one of them. '
+      + 'Buying either takes the other off the market permanently.';
+
+  const list = document.getElementById('dreamList');
+  if (list.children.length !== DREAM_ORDER.length) {
+    list.innerHTML = '';
+    DREAM_ORDER.forEach(() => list.appendChild(document.createElement('div')));
+  }
+
+  DREAM_ORDER.forEach((key, i) => {
+    const home = DREAM_HOMES[key];
+    const card = list.children[i];
+    const isOwned = owned === key;
+    const forfeited = Boolean(owned) && !isOwned;
+    const affordable = !owned && state.coins >= home.cost;
+    const percent = Math.min(100, Math.floor((state.coins / home.cost) * 100));
+
+    const status = isOwned ? 'owned' : forfeited ? 'forfeited' : affordable ? 'ready' : 'saving';
+    const sig = `${status}:${status === 'saving' ? percent : ''}`;
+    if (card.dataset.sig !== sig) {
+      card.className = `dream-card ${status}`;
+      card.innerHTML = '';
+
+      const emoji = document.createElement('div');
+      emoji.className = 'dream-emoji';
+      emoji.textContent = forfeited ? '🚫' : home.emoji;
+      emoji.setAttribute('aria-hidden', 'true');
+      card.appendChild(emoji);
+
+      const name = document.createElement('div');
+      name.className = 'dream-name';
+      name.textContent = home.name;
+      card.appendChild(name);
+
+      const tagline = document.createElement('div');
+      tagline.className = 'dream-tagline';
+      tagline.textContent = home.tagline;
+      card.appendChild(tagline);
+
+      const desc = document.createElement('div');
+      desc.className = 'dream-desc';
+      desc.textContent = home.describe;
+      card.appendChild(desc);
+
+      const price = document.createElement('div');
+      price.className = 'dream-price';
+      price.textContent = `${home.cost.toLocaleString('en-GB')}💰`;
+      card.appendChild(price);
+
+      if (!owned) {
+        const bar = document.createElement('div');
+        bar.className = 'dream-progress';
+        bar.setAttribute('role', 'progressbar');
+        bar.setAttribute('aria-label', `Savings towards the ${home.name}`);
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', '100');
+        const fill = document.createElement('div');
+        fill.className = 'dream-progress-fill';
+        bar.appendChild(fill);
+        card.appendChild(bar);
+      }
+
+      const btn = document.createElement('button');
+      btn.className = 'dream-btn';
+      if (isOwned) {
+        btn.textContent = '🎉 Yours!';
+        btn.disabled = true;
+      } else if (forfeited) {
+        btn.textContent = 'No longer available';
+        btn.disabled = true;
+      } else {
+        btn.textContent = `Buy the ${home.name}`;
+        btn.disabled = !affordable;
+        btn.onclick = () => buyDreamHome(key);
+      }
+      card.appendChild(btn);
+      card.dataset.sig = sig;
+    }
+
+    // Savings creep up constantly, so the bar and its label update in place.
+    const fill = card.querySelector('.dream-progress-fill');
+    if (fill) {
+      fill.style.width = `${percent}%`;
+      fill.parentElement.setAttribute('aria-valuenow', String(percent));
+      fill.parentElement.title =
+        `${state.coins.toLocaleString('en-GB')} of ${home.cost.toLocaleString('en-GB')}💰 saved`;
+    }
+  });
+}
+
+function buyDreamHome(key) {
+  const home = DREAM_HOMES[key];
+  if (!home || state.dreamHome) return;
+  if (state.coins < home.cost) {
+    SFX.error();
+    showToast('Not enough coins!');
+    return;
+  }
+
+  // Irreversible and it forfeits the other goal, so make the trade explicit.
+  const other = DREAM_ORDER.find((k) => k !== key);
+  const confirmed = window.confirm(
+    `Buy the ${home.name} for ${home.cost.toLocaleString('en-GB')} coins?\n\n`
+    + `This is final: the ${DREAM_HOMES[other].name} will no longer be available.`,
+  );
+  if (!confirmed) return;
+
+  state.coins -= home.cost;
+  state.dreamHome = key;
+  SFX.achievement();
+  showToast(`${home.emoji} You bought the ${home.name}! The farm is a home now.`);
+  spawnFloatText(home.emoji, document.getElementById('dreamList'), 'gain');
+  saveState();
+  render();
+}
+
+/* ------------------------------------------------------------------ */
 /* Render / loop                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -1782,6 +1934,8 @@ function render() {
     renderMarket();
   } else if (activeTab === 'achievements') {
     renderAchievements();
+  } else if (activeTab === 'dream') {
+    renderDream();
   }
 }
 
