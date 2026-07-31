@@ -61,6 +61,17 @@
         <span class="onboarding-text">🌱 Pick a seed below, then tap an empty plot to plant it. Come back once it's grown to harvest!</span>
         <button id="onboardingDismissBtn">Got it!</button>
       </div>
+      <div class="farmer-strip" id="farmerStrip">
+        <div class="farmer-avatar" id="farmerAvatar" aria-hidden="true"></div>
+        <div class="farmer-info">
+          <div class="farmer-state" id="farmerState"></div>
+          <div class="farmer-energy" id="farmerEnergy" role="progressbar"
+               aria-label="Farmer energy" aria-valuemin="0" aria-valuemax="100">
+            <div class="farmer-energy-fill" id="farmerEnergyFill"></div>
+          </div>
+        </div>
+        <button class="farmer-feed-btn" id="farmerFeedBtn"></button>
+      </div>
       <div class="seed-bar" id="seedBar"></div>
       <div class="plots-grid" id="plotsGrid"></div>
       <div class="night-veil"></div>
@@ -85,7 +96,7 @@
       </div>
       <div class="animal-group">
         <h2 class="group-title">🐕 Dogs</h2>
-        <p class="group-note">A fed dog stands guard and chases off wolves before they reach your livestock. Each dog on duty covers 4 animals, so a bigger herd needs more dogs.</p>
+        <p class="group-note">A dog stands guard and chases off wolves, but it eats meat: feeding one means slaughtering livestock, and the bigger the animal the longer the watch. Each dog on duty covers 4 animals, so a bigger herd needs more dogs.</p>
         <p class="guard-status" id="dogGuardStatus" role="status"></p>
         <div class="animal-list" id="dogList"></div>
         <button class="buy-animal-btn" id="buyDogBtn"></button>
@@ -109,6 +120,9 @@
       <div class="market-list" id="sellList"></div>
       <h2 class="group-title">Inventory</h2>
       <div class="inventory-list" id="inventoryList"></div>
+      <h2 class="group-title">Farmer</h2>
+      <div class="farmer-choice" id="farmerChoice"></div>
+
       <h2 class="group-title">Sound</h2>
       <div class="sound-controls">
         <button id="musicToggleBtn" aria-pressed="true">🎵 Music: On</button>
@@ -152,6 +166,16 @@
       </span>
     </footer>
 
+  </div>
+
+  <div id="farmerPicker" class="farmer-picker hidden" role="dialog" aria-modal="true"
+       aria-labelledby="farmerPickerTitle">
+    <div class="farmer-picker-panel">
+      <h2 id="farmerPickerTitle">Who is running this farm?</h2>
+      <p>You will be doing every job here — planting, harvesting, feeding and
+         milking. Pick your farmer to begin.</p>
+      <div class="farmer-picker-options" id="farmerPickerOptions"></div>
+    </div>
   </div>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>

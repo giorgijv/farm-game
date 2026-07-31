@@ -17,6 +17,12 @@ npm run serve     # http://localhost:4173
 
 ## How it works
 
+- **The farmer** — the first thing a new game asks is who is running the place:
+  a female or male farmer. They do every job here, and they eat too. A meal of
+  **2 pumpkins** keeps them going for three in-game days; run out and they are
+  exhausted, and every harvest is halved until they eat again. A tired harvest
+  never yields nothing, so a farmer can always work their way back to a
+  pumpkin. The choice can be changed later under Market → Farmer.
 - **Farm** — pick a seed (wheat, corn, carrot or pumpkin) and plant it on an
   empty plot. Crops grow through seed → sprout → ripe; tap a ripe plot to
   harvest. Eight of the sixteen plots start locked and are bought one at a
@@ -39,10 +45,14 @@ npm run serve     # http://localhost:4173
   day. Selling a starving animal still recovers half its price, and — as with
   crops — the clock only runs while the game is open, so nothing dies while
   you are away.
-- **Guardians** — a **dog** (fed on eggs) chases off the wolves that
-  otherwise carry away livestock, and a **cat** (fed on milk) keeps crows
-  from eating planted crops. Both protect only while fed: a guardian works a
-  shift, then goes hungry and needs feeding again. Each one on duty covers
+- **Guardians** — a **dog** chases off the wolves that otherwise carry away
+  livestock, and a **cat** (fed on milk) keeps crows from eating planted
+  crops. A dog will not touch produce: feeding one means **slaughtering an
+  animal**, and the bigger the animal the longer the watch — a chicken buys
+  90 seconds, a sheep 200, a cow 320. Giving up a cow or a sheep asks for
+  confirmation; a chicken, the intended staple, does not. Both guardians
+  protect only while fed: one works a shift, then goes hungry and needs
+  feeding again. Each one on duty covers
   **four** of its charges, so the guard has to grow with the farm — a dozen
   animals need three dogs, a full sixteen-plot field needs four cats. Cover
   only part of the farm and you turn away only that share of raids, so a lone
@@ -119,11 +129,11 @@ npx playwright install chromium   # first run only
 npm test
 ```
 
-`tests/game.spec.js` covers the core loop, animal production, guardians and
-raids, guard coverage scaling with the farm, crop spoilage, animal starvation,
-the market, upgrades, achievements, the two dream homes, the day cycle, save
-loading/migration, the welcome-back summary, keyboard operability, and offline
-play. It also asserts that the
+`tests/game.spec.js` covers the core loop, the farmer and their meals, animal
+production, guardians and raids, guard coverage scaling with the farm, feeding
+a dog on livestock, crop spoilage, animal starvation, the market, upgrades,
+achievements, the two dream homes, the day cycle, save loading/migration, the
+welcome-back summary, keyboard operability, and offline play. It also asserts that the
 once-a-second render reuses DOM nodes, since rebuilding them would silently
 restart every CSS animation.
 

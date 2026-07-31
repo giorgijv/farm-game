@@ -2,6 +2,7 @@ const { test, expect, devices } = require('@playwright/test');
 
 const SAVE_KEY = 'farmLifeSave_v2';
 const PLOT_COUNT = 16;
+const FARMER_MEAL_MS = 3 * 90_000;
 
 /** Android-ish profiles: a small phone, a common phone, and landscape. */
 const PHONE = { viewport: { width: 393, height: 851 }, deviceScaleFactor: 2.75, isMobile: true, hasTouch: true };
@@ -28,6 +29,10 @@ function makeSave(overrides = {}) {
     musicOn: false,
     volume: 0.7,
     onboarded: true,
+    // A farmer must be chosen before anything else is reachable, so every
+    // fixture starts with one picked and fed.
+    farmer: 'female',
+    farmerFedUntil: Date.now() + FARMER_MEAL_MS,
     lastSeenAt: Date.now(),
     ...overrides,
   };

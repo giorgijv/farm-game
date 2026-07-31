@@ -8,6 +8,7 @@ const ACHIEVEMENT_IDS = [
   'shepherd', 'full_barn', 'full_house', 'wealthy_farmer', 'week_one', 'big_business',
 ];
 const DAY_LENGTH_MS = 90_000;
+const FARMER_MEAL_MS = 3 * DAY_LENGTH_MS;
 const PLOT_COUNT = 16;
 
 /** A complete, current-shape save. Muted so tests never open an AudioContext. */
@@ -31,6 +32,10 @@ function makeSave(overrides = {}) {
     musicOn: false,
     volume: 0.7,
     onboarded: true,
+    // A farmer must be chosen before anything else is reachable, so every
+    // fixture starts with one picked and fed.
+    farmer: 'female',
+    farmerFedUntil: Date.now() + FARMER_MEAL_MS,
     lastSeenAt: Date.now(),
     ...overrides,
   };
@@ -73,6 +78,164 @@ const coins = async (page) => (await readSave(page)).coins;
 const inventory = async (page) => (await readSave(page)).inventory;
 
 const secondsAgo = (s) => Date.now() / 1000 - s;
+
+/* ------------------------------------------------------------------ */
+/* Core loop                                                           */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* The farmer                                                          */
+/* ------------------------------------------------------------------ */
+
+test.describe('the farmer', () => {
+  const ripeWheat = () => [
+    { crop: 'wheat', plantedAt: secondsAgo(60) },
+    ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+  ];
+
+  test('a new game asks who is running the farm', async ({ page }) => {
+    await load(page, makeSave({ farmer: null, farmerFedUntil: null }));
+
+    const picker = page.locator('#farmerPicker');
+    await expect(picker).toBeVisible();
+    await expect(page.locator('.farmer-option')).toHaveCount(2);
+    await expect(page.locator('.farmer-option').nth(0)).toHaveAttribute('aria-label', 'Female farmer');
+    await expect(page.locator('.farmer-option').nth(1)).toHaveAttribute('aria-label', 'Male farmer');
+  });
+
+  test('picking a farmer starts the game with them fed', async ({ page }) => {
+    await load(page, makeSave({ farmer: null, farmerFedUntil: null }));
+
+    await page.locator('.farmer-option').nth(1).click(); // male
+
+    await expect(page.locator('#farmerPicker')).toBeHidden();
+    const s = await readSave(page);
+    expect(s.farmer).toBe('male');
+    expect(s.farmerFedUntil).toBeGreaterThan(Date.now());
+    await expect(page.locator('#farmerAvatar')).toHaveText('👨‍🌾');
+  });
+
+  test('the choice is remembered and shown in the top bar', async ({ page }) => {
+    await load(page, makeSave({ farmer: 'male' }));
+
+    await expect(page.locator('#farmerPicker')).toBeHidden();
+    await expect(page.locator('#dayLabel')).toContainText('👨‍🌾');
+    await expect(page.locator('#farmerAvatar')).toHaveText('👨‍🌾');
+  });
+
+  test('a save from before the farmer asks on the next load', async ({ page }) => {
+    // The field is intact — only the farmer is missing.
+    await load(page, makeSave({ farmer: undefined, farmerFedUntil: undefined, coins: 777 }));
+
+    await expect(page.locator('#farmerPicker')).toBeVisible();
+    await page.locator('.farmer-option').first().click();
+    expect((await readSave(page)).coins).toBe(777);
+  });
+
+  test('the farmer can be swapped later from the market', async ({ page }) => {
+    await load(page, makeSave({ farmer: 'female' }));
+    await page.getByRole('button', { name: /Market/ }).click();
+
+    await expect(page.locator('.farmer-swap').first()).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('.farmer-swap').nth(1).click();
+
+    expect((await readSave(page)).farmer).toBe('male');
+    await expect(page.locator('.farmer-swap').nth(1)).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('the farmer eats pumpkins', async ({ page }) => {
+    await load(page, makeSave({
+      // Nearly out of energy, so the meal is worth taking.
+      farmerFedUntil: Date.now() + 1000,
+      inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 3, milk: 0, egg: 0, wool: 0 },
+    }));
+
+    await expect(page.locator('#farmerFeedBtn')).toHaveText('Eat (2 🎃)');
+    await page.locator('#farmerFeedBtn').click();
+
+    const s = await readSave(page);
+    expect(s.inventory.pumpkin).toBe(1); // 3 - 2
+    expect(s.farmerFedUntil).toBeGreaterThan(Date.now() + FARMER_MEAL_MS - 5000);
+    await expect(page.locator('#farmerState')).toContainText('Well fed');
+  });
+
+  test('with no pumpkins the farmer cannot eat', async ({ page }) => {
+    await load(page, makeSave({
+      farmerFedUntil: Date.now() + 1000,
+      inventory: { wheat: 9, corn: 9, carrot: 9, pumpkin: 1, milk: 9, egg: 9, wool: 9 },
+    }));
+
+    // One pumpkin is not a meal.
+    await expect(page.locator('#farmerFeedBtn')).toBeDisabled();
+  });
+
+  test('a well-fed farmer has nothing to gain from another meal', async ({ page }) => {
+    await load(page, makeSave({
+      farmerFedUntil: Date.now() + FARMER_MEAL_MS,
+      inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 9, milk: 0, egg: 0, wool: 0 },
+    }));
+
+    await expect(page.locator('#farmerFeedBtn')).toHaveText('Well fed');
+    await expect(page.locator('#farmerFeedBtn')).toBeDisabled();
+  });
+
+  test('an exhausted farmer harvests half as much', async ({ page }) => {
+    await load(page, makeSave({
+      plots: ripeWheat(),
+      farmerFedUntil: Date.now() - 1, // out of energy
+      inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
+      unlockedAchievements: [...ACHIEVEMENT_IDS],
+    }));
+
+    await expect(page.locator('#farmerStrip')).toHaveClass(/tired/);
+    await expect(page.locator('#farmerState')).toContainText('Exhausted');
+
+    // Wheat yields 3; exhausted, that halves to 1.
+    await page.locator('#plotsGrid > *').first().click();
+    expect((await readSave(page)).inventory.wheat).toBe(1);
+  });
+
+  test('a rested farmer gets the full harvest', async ({ page }) => {
+    await load(page, makeSave({
+      plots: ripeWheat(),
+      farmerFedUntil: Date.now() + FARMER_MEAL_MS,
+      inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
+      unlockedAchievements: [...ACHIEVEMENT_IDS],
+    }));
+
+    await page.locator('#plotsGrid > *').first().click();
+    expect((await readSave(page)).inventory.wheat).toBe(3);
+  });
+
+  test('a tired farmer never harvests nothing, so recovery is always possible', async ({ page }) => {
+    await load(page, makeSave({
+      // A single pumpkin plot, ripe, with an exhausted farmer and no stock.
+      plots: [
+        { crop: 'pumpkin', plantedAt: secondsAgo(600) },
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+      farmerFedUntil: Date.now() - 1,
+      inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
+      unlockedAchievements: [...ACHIEVEMENT_IDS],
+    }));
+
+    await page.locator('#plotsGrid > *').first().click();
+    expect((await readSave(page)).inventory.pumpkin).toBeGreaterThanOrEqual(1);
+  });
+
+  test('the meal clock does not run down while the game is closed', async ({ page }) => {
+    const away = 30 * 60 * 1000;
+    await load(page, makeSave({
+      farmerFedUntil: Date.now() - away + 0.5 * FARMER_MEAL_MS,
+      lastSeenAt: Date.now() - away,
+      dayStartedAt: Date.now() - away,
+    }));
+
+    await expect(page.locator('#farmerStrip')).not.toHaveClass(/tired/);
+    const { farmerFedUntil } = await readSave(page);
+    expect(farmerFedUntil - Date.now()).toBeGreaterThan(0.4 * FARMER_MEAL_MS);
+  });
+});
 
 /* ------------------------------------------------------------------ */
 /* Core loop                                                           */
@@ -240,13 +403,17 @@ test.describe('feed economics', () => {
     });
   });
 
-  test('every animal eats a different food', async ({ page }) => {
+  test('every animal that eats produce has its own food', async ({ page }) => {
     await load(page, makeSave());
 
-    const foods = await page.evaluate(() =>
-      ANIMAL_ORDER.map((kind) => ANIMALS[kind].feed.good));
+    const foods = await page.evaluate(() => ANIMAL_ORDER
+      .filter((kind) => !ANIMALS[kind].eatsLivestock)
+      .map((kind) => ANIMALS[kind].feed.good));
 
     expect(new Set(foods).size, 'each animal should have its own food').toBe(foods.length);
+    // The dog is the exception: it is fed livestock, not produce.
+    expect(await page.evaluate(() => ANIMALS.dog.feed)).toBeNull();
+    expect(await page.evaluate(() => ANIMALS.dog.eatsLivestock)).toBe(true);
   });
 });
 
@@ -370,21 +537,31 @@ test.describe('guardians', () => {
     await expect(page.locator('#dogList .animal-btn')).toHaveText('On duty');
   });
 
-  test('guardians eat their own food', async ({ page }) => {
+  test('a cat is fed on produce, a dog on livestock', async ({ page }) => {
     await load(page, makeSave({
       dogs: hungryDog(),
       cats: [{ id: 91, state: 'hungry', feedAt: null }],
+      chickens: [{ id: 1, state: 'hungry', feedAt: null }],
       nextAnimalId: 92,
       inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 2, egg: 2, wool: 0 },
     }));
     await page.getByRole('button', { name: /Animals/ }).click();
 
-    await expect(page.locator('#dogList .animal-btn')).toHaveText('Feed (1 🥚)');
     await expect(page.locator('#catList .animal-btn')).toHaveText('Feed (1 🥛)');
+    // The dog gets one button per animal it could be given, not a food cost.
+    await expect(page.locator('#dogList .prey-btn')).toHaveCount(3);
+    await expect(page.locator('#dogList .prey-btn').first()).toHaveText('🐔 90s');
 
-    await page.locator('#dogList .animal-btn').click();
-    await expect.poll(async () => (await inventory(page)).egg).toBe(1);
+    await page.locator('#catList .animal-btn').click();
+    await expect.poll(async () => (await inventory(page)).milk).toBe(1);
+    await expect(page.locator('#catList .animal-state.onduty')).toHaveCount(1);
+
+    // Eggs are no longer dog food; the chicken itself is.
+    await page.locator('#dogList .prey-btn').first().click();
     await expect(page.locator('#dogList .animal-state.onduty')).toHaveCount(1);
+    const s = await readSave(page);
+    expect(s.chickens).toEqual([]);
+    expect(s.inventory.egg).toBe(2);
   });
 
   test('a raid that fell due while away is skipped, not resolved', async ({ page }) => {
@@ -526,6 +703,123 @@ test.describe('guardians', () => {
 
     await expect(page.locator('#dogGuardStatus')).toContainText('all 3 animals unguarded');
     await expect(page.locator('#catGuardStatus')).toContainText('Nothing planted');
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Dogs eat livestock                                                */
+  /* ---------------------------------------------------------------- */
+
+  const preyBtn = (page, i) => page.locator('#dogList .prey-btn').nth(i);
+  const acceptConfirms = (page) => page.on('dialog', (d) => d.accept());
+
+  test('a bigger animal buys a longer watch', async ({ page }) => {
+    await load(page, makeSave({ dogs: hungryDog(), nextAnimalId: 91 }));
+
+    const shifts = await page.evaluate(() =>
+      DOG_PREY_ORDER.map((k) => DOG_PREY[k].shiftTime));
+
+    // chicken < sheep < cow, strictly increasing with the size of the animal.
+    expect(shifts).toEqual([...shifts].sort((a, b) => a - b));
+    expect(new Set(shifts).size).toBe(shifts.length);
+  });
+
+  test('feeding a dog a chicken costs the chicken', async ({ page }) => {
+    await load(page, makeSave({
+      dogs: hungryDog(),
+      chickens: [{ id: 1, state: 'hungry', feedAt: null }, { id: 2, state: 'hungry', feedAt: null }],
+      nextAnimalId: 91,
+    }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+
+    await preyBtn(page, 0).click(); // chicken, no confirmation
+
+    await expect(page.locator('#toast')).toContainText('Slaughtered a Chicken');
+    const s = await readSave(page);
+    expect(s.chickens).toHaveLength(1);
+    expect(s.dogs[0].state).toBe('producing');
+    expect(s.dogs[0].shiftTime).toBe(90);
+  });
+
+  test('a cow keeps the dog on duty far longer than a chicken', async ({ page }) => {
+    acceptConfirms(page);
+    await load(page, makeSave({
+      dogs: hungryDog(),
+      cows: [{ id: 1, state: 'hungry', feedAt: null }],
+      nextAnimalId: 91,
+    }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+
+    await preyBtn(page, 2).click(); // cow
+
+    const s = await readSave(page);
+    expect(s.cows).toEqual([]);
+    expect(s.dogs[0].shiftTime).toBe(320);
+    // The shift really is longer: a dog 200s in is still working.
+    await page.evaluate(() => { state.dogs[0].feedAt = Date.now() / 1000 - 200; });
+    await expect(page.locator('#dogList .animal-state.onduty')).toHaveCount(1);
+  });
+
+  test('giving up a cow asks first', async ({ page }) => {
+    page.on('dialog', (d) => d.dismiss());
+    await load(page, makeSave({
+      dogs: hungryDog(),
+      cows: [{ id: 1, state: 'hungry', feedAt: null }],
+      nextAnimalId: 91,
+    }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+
+    await preyBtn(page, 2).click();
+    await page.waitForTimeout(300);
+
+    const s = await readSave(page);
+    expect(s.cows).toHaveLength(1); // declined, so nothing was lost
+    expect(s.dogs[0].state).toBe('hungry');
+  });
+
+  test('with empty pens there is nothing to feed the dog', async ({ page }) => {
+    await load(page, makeSave({ dogs: hungryDog(), nextAnimalId: 91 }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+
+    for (let i = 0; i < 3; i += 1) await expect(preyBtn(page, i)).toBeDisabled();
+    // Buying an animal is what puts a meal back on the table.
+    await page.evaluate(() => {
+      state.chickens.push({ id: 5, state: 'hungry', feedAt: null, starvesAt: null });
+      render();
+    });
+    await expect(preyBtn(page, 0)).toBeEnabled();
+  });
+
+  test('a producing animal is spared while an idle one is available', async ({ page }) => {
+    await load(page, makeSave({
+      dogs: hungryDog(),
+      chickens: [
+        { id: 1, state: 'producing', feedAt: secondsAgo(2) },
+        { id: 2, state: 'hungry', feedAt: null },
+      ],
+      nextAnimalId: 91,
+    }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+
+    await preyBtn(page, 0).click();
+
+    // The one mid-cycle is left alone; the idle one goes.
+    const s = await readSave(page);
+    expect(s.chickens).toHaveLength(1);
+    expect(s.chickens[0].state).toBe('producing');
+  });
+
+  test('eggs no longer feed a dog', async ({ page }) => {
+    await load(page, makeSave({
+      dogs: hungryDog(),
+      nextAnimalId: 91,
+      inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 9, wool: 0 },
+    }));
+
+    // A barn full of eggs and no livestock leaves the dog hungry.
+    await page.evaluate(() => feedAnimal('dog', 90));
+    const s = await readSave(page);
+    expect(s.dogs[0].state).toBe('hungry');
+    expect(s.inventory.egg).toBe(9);
   });
 });
 
@@ -961,6 +1255,8 @@ test.describe('save migration', () => {
       inventory: { wheat: 1 }, // every other good missing
     }, LEGACY_KEY);
 
+    // A save this old predates the farmer, so the picker is in the way.
+    await page.locator('.farmer-option').first().click();
     await page.locator('#plotsGrid > *').first().click(); // harvest
 
     const inv = await inventory(page);

@@ -48,8 +48,9 @@ const ANIMALS = {
   },
   dog: {
     name: 'Dog', emoji: '🐕', stateKey: 'dogs', buyBaseCost: 180, costIncrement: 120,
-    feed: { good: 'egg', amount: 1 },
-    // A fed dog stands watch for this long, then wants feeding again.
+    // Fed on livestock, not produce — see DOG_PREY. The shift length comes
+    // from whatever was slaughtered, so it lives on the animal, not here.
+    feed: null, eatsLivestock: true,
     produceTime: 150, produceYield: 0, produceKey: null,
     guards: 'wolves',
     role: 'Keeps wolves away from your livestock',
@@ -67,6 +68,40 @@ const LIVESTOCK_ORDER = ['cow', 'chicken', 'sheep'];
 const GUARDIAN_ORDER = ['dog', 'cat'];
 const ANIMAL_ORDER = [...LIVESTOCK_ORDER, ...GUARDIAN_ORDER];
 const ANIMAL_SELL_REFUND_RATE = 0.5;
+
+/* A dog will not touch crops or eggs — it is fed by slaughtering livestock,
+   and the bigger the animal the longer it keeps the dog on duty. A chicken
+   is the cheap staple; a cow is a serious thing to give up but buys nearly
+   four times the watch. */
+const DOG_PREY = {
+  chicken: { shiftTime: 90 },
+  sheep: { shiftTime: 200 },
+  cow: { shiftTime: 320 },
+};
+
+const DOG_PREY_ORDER = ['chicken', 'sheep', 'cow'];
+
+// Giving up a cow or a sheep is worth a second thought; a chicken is not.
+const SLAUGHTER_CONFIRM = ['cow', 'sheep'];
+
+/* The farmer. One person does every job here — planting, harvesting, feeding,
+   milking — and has to eat like everything else on the farm. Pumpkins are the
+   richest crop, so they are what a stretch of work costs. */
+const FARMERS = {
+  female: { emoji: '👩‍🌾', label: 'Female farmer' },
+  male: { emoji: '👨‍🌾', label: 'Male farmer' },
+};
+
+const FARMER_ORDER = ['female', 'male'];
+const FARMER_MEAL = { good: 'pumpkin', amount: 2 };
+const FARMER_MEAL_DAYS = 3;
+const FARMER_MEAL_MS = FARMER_MEAL_DAYS * DAY_LENGTH_MS;
+/* Going hungry costs the farmer half of every harvest rather than stopping
+   work outright: a farmer who could not harvest could never grow the pumpkins
+   needed to eat again, which would be a dead end rather than a setback. */
+const TIRED_YIELD_FACTOR = 0.5;
+// Above this there is nothing to gain from another meal, so the button rests.
+const FARMER_FULL_FRACTION = 0.8;
 
 /* Raids. Intervals are deliberately long and jittered so a farm is not under
    constant siege, and anything that fell due while the tab was closed is
@@ -237,6 +272,8 @@ function freshState() {
     unlockedAchievements: [],
     upgrades: { sprinkler: 0, feed: 0, fertiliser: 0, contacts: 0 },
     dreamHome: null,
+    farmer: null,          // chosen on the first run
+    farmerFedUntil: null,
     muted: false,
     musicOn: true,
     volume: 0.7,
@@ -263,12 +300,34 @@ function cropGrowTime(crop) {
   return crop.growTime * (1 - 0.12 * upgradeLevel('sprinkler'));
 }
 
-function animalProduceTime(def) {
-  return def.produceTime * (1 - 0.12 * upgradeLevel('feed'));
+/* A dog's watch is as long as whatever it ate, so the time is carried on the
+   animal; everything else runs on its species' fixed timer. */
+function animalProduceTime(def, animal) {
+  const base = (def.eatsLivestock && animal && Number.isFinite(animal.shiftTime))
+    ? animal.shiftTime
+    : def.produceTime;
+  return base * (1 - 0.12 * upgradeLevel('feed'));
 }
 
 function cropYield(crop) {
-  return crop.yield + upgradeLevel('fertiliser');
+  const yielded = crop.yield + upgradeLevel('fertiliser');
+  // Never below one, so a hungry farmer can always harvest their way back.
+  return isFarmerTired() ? Math.max(1, Math.floor(yielded * TIRED_YIELD_FACTOR)) : yielded;
+}
+
+/* The farmer's own meal clock. Like shelf life and animal hunger it runs on
+   play time only, so nobody comes back from a break to a starving farmer. */
+function farmerEnergy() {
+  if (!Number.isFinite(state.farmerFedUntil)) return 0;
+  return clamp01((state.farmerFedUntil - Date.now()) / FARMER_MEAL_MS);
+}
+
+function isFarmerTired() {
+  return farmerEnergy() <= 0;
+}
+
+function canFeedFarmer() {
+  return (state.inventory[FARMER_MEAL.good] || 0) >= FARMER_MEAL.amount;
 }
 
 function emptyPlot() {
@@ -337,6 +396,7 @@ function shiftPlayClocks(save, byMs) {
       if (Number.isFinite(animal.starvesAt)) animal.starvesAt += byMs;
     });
   });
+  if (Number.isFinite(save.farmerFedUntil)) save.farmerFedUntil += byMs;
 }
 
 function updateSpoilage() {
@@ -410,7 +470,7 @@ function updateStarvation() {
 
 function animalProgress(animal, def) {
   if (animal.state !== 'producing' || !Number.isFinite(animal.feedAt)) return 0;
-  return clamp01((nowSec() - animal.feedAt) / animalProduceTime(def));
+  return clamp01((nowSec() - animal.feedAt) / animalProduceTime(def, animal));
 }
 
 function goodPrice(key) {
@@ -472,6 +532,8 @@ function migrateSave(parsed) {
         feedAt: Number.isFinite(a.feedAt) ? a.feedAt : null,
         starvesAt: Number.isFinite(a.starvesAt) ? a.starvesAt : null,
         starvingWarned: Boolean(a.starvingWarned),
+        // Dogs only: how long the last kill keeps them on duty.
+        shiftTime: Number.isFinite(a.shiftTime) ? a.shiftTime : null,
       }))
       // A producing animal with no feed time would never finish.
       .map((a) => (a.state === 'producing' && a.feedAt === null ? becomeHungry(a) : a));
@@ -502,6 +564,9 @@ function migrateSave(parsed) {
   if (merged.selectedSeed && !CROPS[merged.selectedSeed]) merged.selectedSeed = null;
   // An unknown dream home would leave the goal permanently unclaimable.
   if (!DREAM_HOMES[merged.dreamHome]) merged.dreamHome = null;
+  // Saves from before the farmer get the picker on their next load.
+  if (!FARMERS[merged.farmer]) merged.farmer = null;
+  if (!Number.isFinite(merged.farmerFedUntil)) merged.farmerFedUntil = null;
   merged.musicOn = merged.musicOn !== false;
   merged.volume = Number.isFinite(merged.volume) ? Math.min(Math.max(merged.volume, 0), 1) : 0.7;
   merged.muted = Boolean(merged.muted);
@@ -606,6 +671,8 @@ function spawnFloatText(text, anchorEl, variant) {
 /* Feeding is per-animal now: each one eats a specific good. */
 
 function canFeed(def) {
+  // A dog eats livestock, so "can feed" means having something to slaughter.
+  if (def.eatsLivestock) return DOG_PREY_ORDER.some((k) => state[ANIMALS[k].stateKey].length > 0);
   return (state.inventory[def.feed.good] || 0) >= def.feed.amount;
 }
 
@@ -761,6 +828,117 @@ function setActiveTab(tab) {
   document.getElementById('achievementsTab').classList.toggle('hidden', tab !== 'achievements');
   document.getElementById('dreamTab').classList.toggle('hidden', tab !== 'dream');
   render();
+}
+
+/* ------------------------------------------------------------------ */
+/* The farmer                                                           */
+/* ------------------------------------------------------------------ */
+
+/* Shown over everything on the very first run — the farm has to belong to
+   somebody before any of it means anything. */
+function renderFarmerPicker() {
+  const picker = document.getElementById('farmerPicker');
+  const needed = !state.farmer;
+  picker.classList.toggle('hidden', !needed);
+  if (!needed) return;
+
+  const options = document.getElementById('farmerPickerOptions');
+  if (options.children.length === FARMER_ORDER.length) return;
+
+  options.innerHTML = '';
+  FARMER_ORDER.forEach((key) => {
+    const farmer = FARMERS[key];
+    const btn = document.createElement('button');
+    btn.className = 'farmer-option';
+    btn.setAttribute('aria-label', farmer.label);
+    btn.innerHTML = `<span class="farmer-option-emoji" aria-hidden="true">${farmer.emoji}</span>`;
+    const label = document.createElement('span');
+    label.className = 'farmer-option-label';
+    label.textContent = farmer.label;
+    btn.appendChild(label);
+    btn.onclick = () => chooseFarmer(key);
+    options.appendChild(btn);
+  });
+}
+
+function chooseFarmer(key) {
+  if (!FARMERS[key]) return;
+  const first = !state.farmer;
+  state.farmer = key;
+  // Nobody starts a day's work on an empty stomach.
+  if (first) state.farmerFedUntil = Date.now() + FARMER_MEAL_MS;
+  SFX.buy();
+  showToast(`${FARMERS[key].emoji} ${first ? 'Welcome to the farm!' : 'Farmer changed.'}`);
+  saveState();
+  render();
+}
+
+function renderFarmer() {
+  const farmer = FARMERS[state.farmer];
+  if (!farmer) return;
+
+  document.getElementById('farmerAvatar').textContent = farmer.emoji;
+
+  const energy = farmerEnergy();
+  const tired = isFarmerTired();
+  const strip = document.getElementById('farmerStrip');
+  strip.classList.toggle('tired', tired);
+
+  const stateEl = document.getElementById('farmerState');
+  stateEl.textContent = tired
+    ? '😩 Exhausted — harvests are halved'
+    : energy <= 0.25 ? '🥱 Getting hungry' : '💪 Well fed';
+
+  const percent = Math.round(energy * 100);
+  const fill = document.getElementById('farmerEnergyFill');
+  fill.style.width = `${percent}%`;
+  document.getElementById('farmerEnergy').setAttribute('aria-valuenow', String(percent));
+
+  const btn = document.getElementById('farmerFeedBtn');
+  const full = energy >= FARMER_FULL_FRACTION;
+  btn.textContent = full
+    ? 'Well fed'
+    : `Eat (${FARMER_MEAL.amount} ${GOODS[FARMER_MEAL.good].emoji})`;
+  btn.disabled = full || !canFeedFarmer();
+  btn.setAttribute(
+    'aria-label',
+    `Feed the farmer ${FARMER_MEAL.amount} ${GOODS[FARMER_MEAL.good].name}`,
+  );
+  btn.onclick = feedFarmer;
+}
+
+function feedFarmer() {
+  if (farmerEnergy() >= FARMER_FULL_FRACTION) return;
+  if (!canFeedFarmer()) {
+    SFX.error();
+    const good = GOODS[FARMER_MEAL.good];
+    showToast(`The farmer needs ${FARMER_MEAL.amount} ${good.name} to keep going!`);
+    return;
+  }
+  state.inventory[FARMER_MEAL.good] -= FARMER_MEAL.amount;
+  state.farmerFedUntil = Date.now() + FARMER_MEAL_MS;
+  SFX.feed();
+  showToast(`${FARMERS[state.farmer].emoji} Back to full strength!`);
+  saveState();
+  render();
+}
+
+// Lets a mis-tap on the first screen be undone, from Market -> Farmer.
+function renderFarmerChoice() {
+  const wrap = document.getElementById('farmerChoice');
+  if (wrap.children.length !== FARMER_ORDER.length) {
+    wrap.innerHTML = '';
+    FARMER_ORDER.forEach(() => wrap.appendChild(document.createElement('button')));
+  }
+  FARMER_ORDER.forEach((key, i) => {
+    const farmer = FARMERS[key];
+    const btn = wrap.children[i];
+    const active = state.farmer === key;
+    btn.className = `farmer-swap${active ? ' active' : ''}`;
+    btn.textContent = `${farmer.emoji} ${farmer.label}`;
+    btn.setAttribute('aria-pressed', String(active));
+    btn.onclick = () => chooseFarmer(key);
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1012,7 +1190,12 @@ function harvestPlot(idx) {
 /* ------------------------------------------------------------------ */
 
 function animalSignature(animal, def, ready) {
-  const hungry = `${isStarving(animal) ? 'starving' : 'hungry'}:${canFeed(def) ? 'fed' : 'nofood'}`;
+  // A dog's buttons depend on which livestock is actually in the pens, so the
+  // signature tracks that rather than a single can-feed flag.
+  const supply = def.eatsLivestock
+    ? DOG_PREY_ORDER.map((k) => (state[ANIMALS[k].stateKey].length > 0 ? '1' : '0')).join('')
+    : (canFeed(def) ? 'fed' : 'nofood');
+  const hungry = `${isStarving(animal) ? 'starving' : 'hungry'}:${supply}`;
   // A guardian on duty has no "ready" step — its shift just runs down.
   if (def.guards) {
     if (animal.state === 'producing') return 'onduty';
@@ -1084,14 +1267,34 @@ function buildAnimalCard(card, animal, kind, def, ready, sig) {
     bar.appendChild(fill);
     card.appendChild(bar);
 
-    btn.textContent = feedLabel(def);
-    btn.disabled = !canFeed(def);
-    btn.setAttribute(
-      'aria-label',
-      `Feed this ${def.name} ${def.feed.amount} ${GOODS[def.feed.good].name}`,
-    );
-    btn.onclick = () => feedAnimal(kind, animal.id);
-    card.appendChild(btn);
+    if (def.eatsLivestock) {
+      // A dog gets one button per animal it could be fed, since which one you
+      // give up is the whole decision.
+      DOG_PREY_ORDER.forEach((prey) => {
+        const preyDef = ANIMALS[prey];
+        const available = state[preyDef.stateKey].length;
+        const feedBtn = document.createElement('button');
+        feedBtn.className = 'animal-btn prey-btn';
+        feedBtn.textContent = `${preyDef.emoji} ${DOG_PREY[prey].shiftTime}s`;
+        feedBtn.disabled = available === 0;
+        feedBtn.setAttribute(
+          'aria-label',
+          `Slaughter a ${preyDef.name} to feed this dog for ${DOG_PREY[prey].shiftTime} seconds`
+          + ` (${available} available)`,
+        );
+        feedBtn.onclick = () => feedDog(animal.id, prey);
+        card.appendChild(feedBtn);
+      });
+    } else {
+      btn.textContent = feedLabel(def);
+      btn.disabled = !canFeed(def);
+      btn.setAttribute(
+        'aria-label',
+        `Feed this ${def.name} ${def.feed.amount} ${GOODS[def.feed.good].name}`,
+      );
+      btn.onclick = () => feedAnimal(kind, animal.id);
+      card.appendChild(btn);
+    }
 
     const sellBtn = document.createElement('button');
     sellBtn.className = 'animal-btn-sell';
@@ -1188,6 +1391,8 @@ function renderGuardStatus(kind) {
 
 function feedAnimal(kind, id) {
   const def = ANIMALS[kind];
+  // Dogs are fed livestock, which is a different transaction entirely.
+  if (def.eatsLivestock) return;
   const animal = state[def.stateKey].find((a) => a.id === id);
   if (!animal || animal.state !== 'hungry') return;
   if (!canFeed(def)) {
@@ -1202,6 +1407,53 @@ function feedAnimal(kind, id) {
   animal.starvesAt = null;
   animal.starvingWarned = false;
   SFX.feed();
+  saveState();
+  render();
+}
+
+/* Take an animal out of the pen for the dog. A hungry one goes first — no
+   sense destroying a production cycle that is already half run. */
+function pickForSlaughter(kind) {
+  const list = state[ANIMALS[kind].stateKey];
+  const idle = list.findIndex((a) => a.state === 'hungry');
+  return idle === -1 ? (list.length > 0 ? 0 : -1) : idle;
+}
+
+function feedDog(id, prey) {
+  const def = ANIMALS.dog;
+  const dog = state[def.stateKey].find((a) => a.id === id);
+  if (!dog || dog.state !== 'hungry') return;
+
+  const preyDef = ANIMALS[prey];
+  const shift = DOG_PREY[prey];
+  if (!preyDef || !shift) return;
+
+  const idx = pickForSlaughter(prey);
+  if (idx === -1) {
+    SFX.error();
+    showToast(`No ${pluralOf(preyDef)} to spare!`);
+    return;
+  }
+
+  // Losing a cow or a sheep is expensive enough to be worth confirming; a
+  // chicken is the intended staple and would only get in the way.
+  if (SLAUGHTER_CONFIRM.includes(prey)) {
+    const confirmed = window.confirm(
+      `Slaughter a ${preyDef.name} to feed this dog?\n\n`
+      + `It keeps the dog on duty for ${shift.shiftTime} seconds. The `
+      + `${preyDef.name} is gone for good.`,
+    );
+    if (!confirmed) return;
+  }
+
+  state[preyDef.stateKey].splice(idx, 1);
+  dog.state = 'producing';
+  dog.feedAt = nowSec();
+  dog.shiftTime = shift.shiftTime;
+  dog.starvesAt = null;
+  dog.starvingWarned = false;
+  SFX.feed();
+  showToast(`🐕 Slaughtered a ${preyDef.name} — the dog is on watch for ${shift.shiftTime}s.`);
   saveState();
   render();
 }
@@ -1760,7 +2012,9 @@ function renderTopbar() {
   lastCoinsShown = state.coins;
 
   const isNight = currentNightFactor > 0.5;
-  document.getElementById('dayLabel').textContent = `${isNight ? '🌙 Night' : '☀️ Day'} ${state.day}`;
+  const farmer = FARMERS[state.farmer];
+  document.getElementById('dayLabel').textContent =
+    `${farmer ? `${farmer.emoji} ` : ''}${isNight ? '🌙 Night' : '☀️ Day'} ${state.day}`;
 
   const muteBtn = document.getElementById('muteBtn');
   muteBtn.textContent = state.muted ? '🔇' : '🔊';
@@ -2001,8 +2255,10 @@ function render() {
   updateGuardians();
   checkAchievements();
   renderTopbar();
+  renderFarmerPicker();
   if (activeTab === 'farm') {
     document.getElementById('onboardingBanner').classList.toggle('hidden', state.onboarded);
+    renderFarmer();
     renderSeedBar();
     renderPlots();
   } else if (activeTab === 'animals') {
@@ -2011,6 +2267,7 @@ function render() {
     renderBuyButtons();
   } else if (activeTab === 'market') {
     renderMarket();
+    renderFarmerChoice();
   } else if (activeTab === 'achievements') {
     renderAchievements();
   } else if (activeTab === 'dream') {

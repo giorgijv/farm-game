@@ -1608,6 +1608,223 @@ body {
 }
 
 /* ==================================================================
+   The farmer
+   ================================================================== */
+
+/* First-run picker: nothing else on the farm matters until it has an owner. */
+.farmer-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(28, 16, 4, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.farmer-picker-panel {
+  width: min(440px, 100%);
+  padding: 24px 20px 20px;
+  text-align: center;
+  border-radius: 22px;
+  background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-deep) 100%);
+  border: 4px solid var(--wood-dark);
+  box-shadow: 0 8px 0 var(--wood-dark), 0 18px 32px rgba(30, 16, 3, 0.45);
+  animation: popIn 0.4s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+.farmer-picker-panel h2 {
+  margin-bottom: 8px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.farmer-picker-panel p {
+  margin-bottom: 18px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-soft);
+}
+
+.farmer-picker-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.farmer-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 10px 14px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 800;
+  cursor: pointer;
+  color: var(--text);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fffbe9 0%, #ffedbe 100%);
+  border: 3px solid var(--gold-dark);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.9), 0 5px 0 var(--gold-deep);
+  transition: transform 0.09s ease, box-shadow 0.09s ease;
+}
+
+.farmer-option:active {
+  transform: translateY(3px);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.7), 0 2px 0 var(--gold-deep);
+}
+
+.farmer-option-emoji {
+  font-size: 3rem;
+  line-height: 1;
+  filter: drop-shadow(0 3px 4px rgba(120, 82, 10, 0.4));
+}
+
+/* The farmer's own strip above the seed bar, on the green field. */
+.farmer-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 13px;
+  margin-bottom: 14px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(255, 252, 240, 0.95), rgba(243, 232, 205, 0.95));
+  border: 3px solid var(--wood-dark);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.8), 0 4px 0 var(--wood-dark);
+}
+
+.farmer-strip.tired {
+  border-color: #b5701f;
+  background: linear-gradient(180deg, #fdf0dd, #f3ddb9);
+}
+
+.farmer-avatar {
+  font-size: 2.1rem;
+  line-height: 1;
+  filter: drop-shadow(0 2px 3px rgba(120, 82, 10, 0.4));
+}
+
+.farmer-strip.tired .farmer-avatar {
+  animation: farmerSlump 2.4s ease-in-out infinite;
+}
+
+@keyframes farmerSlump {
+  0%, 100% { transform: rotate(-3deg) translateY(0); }
+  50%      { transform: rotate(-7deg) translateY(2px); }
+}
+
+.farmer-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.farmer-state {
+  margin-bottom: 5px;
+  font-size: 0.84rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.farmer-strip.tired .farmer-state { color: #a3231b; }
+
+.farmer-energy {
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(120, 90, 50, 0.28);
+  box-shadow: inset 0 1px 3px rgba(80, 52, 16, 0.5);
+  overflow: hidden;
+}
+
+.farmer-energy-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #a4ef7f, var(--good-dark));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition: width 0.9s linear;
+}
+
+.farmer-strip.tired .farmer-energy-fill {
+  background: linear-gradient(180deg, #f4906a, #c33a1e);
+}
+
+.farmer-feed-btn {
+  flex-shrink: 0;
+  padding: 11px 13px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 800;
+  cursor: pointer;
+  color: #2f5410;
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--good) 0%, var(--good-dark) 100%);
+  border: 3px solid var(--good-deep);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.55), 0 4px 0 var(--good-deep);
+  transition: transform 0.09s ease, box-shadow 0.09s ease;
+}
+
+.farmer-feed-btn:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.45), 0 1px 0 var(--good-deep);
+}
+
+.farmer-feed-btn:disabled {
+  cursor: not-allowed;
+  color: #6b6153;
+  background: linear-gradient(180deg, #ddd2ba 0%, #c6b998 100%);
+  border-color: #a89a79;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.45), 0 4px 0 #a89a79;
+}
+
+/* Market -> Farmer, so a mis-tap on the first screen is not permanent. */
+.farmer-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.farmer-swap {
+  flex: 1 1 150px;
+  padding: 12px 10px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 800;
+  cursor: pointer;
+  color: #5a3a12;
+  border-radius: 13px;
+  background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-deep) 100%);
+  border: 3px solid var(--wood-dark);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.8), 0 4px 0 var(--wood-dark);
+}
+
+.farmer-swap.active {
+  color: #2f5410;
+  background: linear-gradient(180deg, #d9f5bd 0%, #b6e58c 100%);
+  border-color: var(--good-deep);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.8), 0 4px 0 var(--good-deep);
+}
+
+/* A dog's feed buttons: one per animal it could be given. */
+.animal-btn.prey-btn {
+  margin-bottom: 6px;
+  font-size: 0.82rem;
+  color: #6b2f13;
+  background: linear-gradient(180deg, #ffcf9b 0%, #e8975a 100%);
+  border-color: #b6612c;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.5), 0 4px 0 #b6612c;
+}
+
+.animal-btn.prey-btn:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.4), 0 1px 0 #b6612c;
+}
+
+/* ==================================================================
    Dream homes — the two grand goals
    ================================================================== */
 
