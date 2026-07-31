@@ -70,6 +70,12 @@ screen can never drift from the rules being enforced.
   tab shows the coverage and warns when it falls short. Raids are infrequent
   and jittered, and any that fall due while the game is closed are skipped
   rather than resolved, so a farm is never wiped out overnight.
+- **Subsidy** — a farm starts with **100 coins**, and every seven in-game days
+  it keeps going the state pays a **government subsidy of 100 coins** (the
+  first on day 8). Weeks that pass while the tab is closed are all settled on
+  your return. It is deliberately a trickle next to what a worked field earns:
+  enough to stop a struggling farm stalling out, nowhere near enough to make
+  farming optional.
 - **Market** — sell produce for coins, review your holdings, adjust sound, and
   export or import your save. It also sells four permanent **upgrades** —
   faster crops, faster animals, larger harvests and better prices — each with
@@ -145,7 +151,7 @@ npm test
 `tests/game.spec.js` covers the core loop, the farmer and their meals, animal
 production, guardians and raids, guard coverage scaling with the farm, feeding
 a dog on livestock, crop spoilage, animal starvation, the market, upgrades,
-achievements, the two dream homes, the day cycle, save loading/migration, the
+achievements, the two dream homes, the weekly subsidy, the day cycle, save loading/migration, the
 welcome-back summary, the help panel, the farmer's collapse and game over,
 the ending celebration, keyboard operability, and offline play. It also asserts that the
 once-a-second render reuses DOM nodes, since rebuilding them would silently

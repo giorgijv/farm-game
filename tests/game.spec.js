@@ -1561,6 +1561,102 @@ test.describe('day cycle', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Government subsidy                                                  */
+/* ------------------------------------------------------------------ */
+
+test.describe('government subsidy', () => {
+  const SUBSIDY = 100;
+  /** Awards pre-unlocked so their rewards stay out of the arithmetic. */
+  const subSave = (o = {}) => makeSave({ unlockedAchievements: [...ACHIEVEMENT_IDS], ...o });
+
+  test('a new farm starts with 100 coins', async ({ page }) => {
+    await load(page, undefined); // no save at all: a genuinely fresh game
+    await page.locator('.farmer-option').first().click();
+
+    expect(await coins(page)).toBe(100);
+    expect((await readSave(page)).subsidiesPaid).toBe(0);
+  });
+
+  test('nothing is paid during the first week', async ({ page }) => {
+    await load(page, subSave({ coins: 0, day: 7, subsidiesPaid: 0 }));
+    await page.waitForTimeout(1200);
+
+    // Day 7 is still week one — the week has not been survived yet.
+    expect(await coins(page)).toBe(0);
+    expect((await readSave(page)).subsidiesPaid).toBe(0);
+  });
+
+  test('surviving a week pays a subsidy', async ({ page }) => {
+    await load(page, subSave({ coins: 0, day: 8, subsidiesPaid: 0 }));
+
+    await expect.poll(() => coins(page)).toBe(SUBSIDY);
+    await expect(page.locator('#toast')).toContainText('Government subsidy');
+    await expect(page.locator('#toast')).toContainText('surviving week 1');
+    const s = await readSave(page);
+    expect(s.subsidiesPaid).toBe(1);
+    expect(s.stats.totalCoinsEarned).toBe(SUBSIDY);
+  });
+
+  test('it is paid once per week, not once per tick', async ({ page }) => {
+    await load(page, subSave({ coins: 0, day: 8, subsidiesPaid: 0 }));
+    await expect.poll(() => coins(page)).toBe(SUBSIDY);
+
+    await page.waitForTimeout(2500); // several more ticks
+    expect(await coins(page)).toBe(SUBSIDY);
+  });
+
+  test('a second week pays again', async ({ page }) => {
+    await load(page, subSave({ coins: 0, day: 15, subsidiesPaid: 1 }));
+
+    await expect.poll(() => coins(page)).toBe(SUBSIDY);
+    await expect(page.locator('#toast')).toContainText('surviving week 2');
+    expect((await readSave(page)).subsidiesPaid).toBe(2);
+  });
+
+  test('weeks that passed while away are all settled at once', async ({ page }) => {
+    // Three weeks of calendar go by in one jump.
+    await load(page, subSave({
+      coins: 0,
+      day: 1,
+      subsidiesPaid: 0,
+      dayStartedAt: Date.now() - 22 * DAY_LENGTH_MS,
+    }));
+
+    await expect.poll(() => coins(page)).toBe(3 * SUBSIDY);
+    await expect(page.locator('#toast')).toContainText('3 weeks of farming');
+    expect((await readSave(page)).subsidiesPaid).toBe(3);
+  });
+
+  test('an existing farm does not collect backdated weeks on load', async ({ page }) => {
+    // A day-40 save from before subsidies existed: no windfall.
+    const save = subSave({ coins: 500, day: 40 });
+    delete save.subsidiesPaid;
+    await load(page, save);
+    await page.waitForTimeout(1200);
+
+    expect(await coins(page)).toBe(500);
+    expect((await readSave(page)).subsidiesPaid).toBe(5); // (40 - 1) / 7
+  });
+
+  test('a collapsed farm collects nothing', async ({ page }) => {
+    await load(page, subSave({ coins: 0, day: 30, subsidiesPaid: 0, gameOver: true }));
+    await page.waitForTimeout(1200);
+
+    expect(await coins(page)).toBe(0);
+    expect((await readSave(page)).subsidiesPaid).toBe(0);
+  });
+
+  test('the help panel explains the subsidy', async ({ page }) => {
+    await load(page, subSave());
+    await page.locator('#helpBtn').click();
+
+    const text = await page.locator('#helpBody').textContent();
+    expect(text).toContain('government subsidy');
+    expect(text).toContain('Every 7 days');
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Save loading and migration                                          */
 /* ------------------------------------------------------------------ */
 
@@ -1654,7 +1750,7 @@ test.describe('save migration', () => {
     await load(page, 'this is not json {{{');
 
     await expect(page.locator('#plotsGrid .plot')).toHaveCount(PLOT_COUNT);
-    await expect.poll(() => coins(page)).toBe(50); // starting purse
+    await expect.poll(() => coins(page)).toBe(100); // starting purse
   });
 
   test('a save from before guardians gains empty pens and a fresh raid clock', async ({ page }) => {

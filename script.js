@@ -69,6 +69,13 @@ const GUARDIAN_ORDER = ['dog', 'cat'];
 const ANIMAL_ORDER = [...LIVESTOCK_ORDER, ...GUARDIAN_ORDER];
 const ANIMAL_SELL_REFUND_RATE = 0.5;
 
+/* Every week the farm keeps going, the state chips in. It is a small,
+   dependable trickle next to what a worked field earns — enough to keep a
+   struggling farm from stalling out entirely, nowhere near enough to make
+   farming optional. */
+const WEEK_LENGTH_DAYS = 7;
+const SUBSIDY_AMOUNT = 100;
+
 /* A dog will not touch crops or eggs — it is fed by slaughtering livestock,
    and the bigger the animal the longer it keeps the dog on duty. A chicken
    is the cheap staple; a cow is a serious thing to give up but buys nearly
@@ -265,7 +272,7 @@ const ACHIEVEMENTS = [
 
 function freshState() {
   return {
-    coins: 50,
+    coins: 100,
     day: 1,
     dayStartedAt: Date.now(),
     selectedSeed: null,
@@ -283,6 +290,7 @@ function freshState() {
     stats: { totalHarvested: 0, totalCoinsEarned: 0 },
     unlockedAchievements: [],
     upgrades: { sprinkler: 0, feed: 0, fertiliser: 0, contacts: 0 },
+    subsidiesPaid: 0,
     dreamHome: null,
     farmer: null,          // chosen on the first run
     farmerFedUntil: null,
@@ -653,6 +661,13 @@ function migrateSave(parsed) {
   merged.farmerWarned = Boolean(merged.farmerWarned);
   merged.farmerCritical = Boolean(merged.farmerCritical);
   merged.gameOver = Boolean(merged.gameOver);
+  /* Saves from before subsidies are treated as already paid up to today —
+     otherwise a farm on day 40 would collect five backdated weeks on load.
+     Read from `parsed`, not `merged`: the merge has already filled in the
+     fresh-state default of 0, which a real value is indistinguishable from. */
+  merged.subsidiesPaid = Number.isFinite(parsed.subsidiesPaid)
+    ? Math.max(0, Math.floor(parsed.subsidiesPaid))
+    : Math.max(0, Math.floor((merged.day - 1) / WEEK_LENGTH_DAYS));
   merged.musicOn = merged.musicOn !== false;
   merged.volume = Number.isFinite(merged.volume) ? Math.min(Math.max(merged.volume, 0), 1) : 0.7;
   merged.muted = Boolean(merged.muted);
@@ -1167,6 +1182,10 @@ function helpSections() {
         + 'tab is closed — come back and a summary tells you what finished. Hunger, '
         + 'spoilage and raids are all paused while you are away, so nothing is ever '
         + 'lost overnight.',
+        `Every ${WEEK_LENGTH_DAYS} days the farm keeps going, a government subsidy `
+        + `of ${SUBSIDY_AMOUNT}\uD83D\uDCB0 arrives — the first on day ${WEEK_LENGTH_DAYS + 1}. `
+        + 'Steady but small: enough to stop a struggling farm stalling out, nowhere '
+        + 'near enough to live on.',
       ],
     },
     {
@@ -2473,6 +2492,32 @@ function renderSoundSettings() {
   readout.textContent = `${percent}%`;
 }
 
+/* Whole weeks the farm has lasted. Day 1 is the first day of week one, so the
+   first payment lands on day 8 — a week actually behind you, rather than a
+   handout for opening the game. */
+function weeksSurvived() {
+  return Math.max(0, Math.floor((state.day - 1) / WEEK_LENGTH_DAYS));
+}
+
+function updateSubsidy() {
+  if (state.gameOver) return;
+  // Days can advance several at a time after a break, so settle every week
+  // that is owed rather than one per tick.
+  const owed = weeksSurvived() - state.subsidiesPaid;
+  if (owed <= 0) return;
+
+  const amount = owed * SUBSIDY_AMOUNT;
+  state.coins += amount;
+  state.stats.totalCoinsEarned += amount;
+  state.subsidiesPaid += owed;
+  SFX.buy();
+  showToast(
+    `🏛️ Government subsidy: +${amount}💰 for `
+    + (owed === 1 ? `surviving week ${state.subsidiesPaid}.` : `${owed} weeks of farming.`),
+  );
+  saveState();
+}
+
 function updateDay() {
   const elapsed = Date.now() - state.dayStartedAt;
   if (elapsed >= DAY_LENGTH_MS) {
@@ -2695,6 +2740,7 @@ function tick() {
   // skipping the work costs no progress and it all catches up on return.
   if (document.hidden) return;
   updateDay();
+  updateSubsidy();
   updateSpoilage();
   // Before starvation, so a guardian coming off shift starts its hunger clock
   // on the same tick rather than the next one.
