@@ -88,6 +88,17 @@ const CROP_SPOIL_DAYS = 2;
 const CROP_SPOIL_MS = CROP_SPOIL_DAYS * DAY_LENGTH_MS;
 const CROP_WILT_FRACTION = 0.3; // last 30% of the window shows a warning
 
+/* Starvation. An animal left hungry for four in-game days dies. That is a
+   longer fuse than a crop gets, deliberately: production cycles run 15-35
+   seconds and a guardian's shift 150, so four days is many cycles' worth of
+   grace, and losing an animal costs its purchase price plus the higher price
+   of the replacement — far more than a spoiled crop. Long enough that anyone
+   tending the barn at all never loses one; short enough that walking away
+   from a full barn does. Same play-time clock as spoilage. */
+const ANIMAL_STARVE_DAYS = 4;
+const ANIMAL_STARVE_MS = ANIMAL_STARVE_DAYS * DAY_LENGTH_MS;
+const ANIMAL_STARVING_FRACTION = 0.25; // last in-game day is the warning
+
 const GOODS = {
   wheat: { emoji: '🌾', name: 'Wheat', sellPrice: CROPS.wheat.sellPrice },
   corn: { emoji: '🌽', name: 'Corn', sellPrice: CROPS.corn.sellPrice },
@@ -264,12 +275,45 @@ function isWilting(plot) {
   return Number.isFinite(plot.spoilsAt) && freshness(plot) <= CROP_WILT_FRACTION;
 }
 
-// Shifts every shelf-life deadline later by an absence, so time spent with the
-// game closed never counts against a harvest.
-function shiftSpoilClocks(plots, byMs) {
+/* How much of a hungry animal's grace period is left, 1 down to 0. Same
+   play-time clock as shelf life: started by the first tick that sees the
+   animal hungry, and ticks only run while the page is visible. */
+function fedness(animal) {
+  if (animal.state !== 'hungry') return 1;
+  if (!Number.isFinite(animal.starvesAt)) return 1;
+  return clamp01((animal.starvesAt - Date.now()) / ANIMAL_STARVE_MS);
+}
+
+function isStarving(animal) {
+  return animal.state === 'hungry'
+    && Number.isFinite(animal.starvesAt)
+    && fedness(animal) <= ANIMAL_STARVING_FRACTION;
+}
+
+/* Everything that leaves an animal wanting food goes through here: a fresh
+   purchase, produce collected, a guardian's shift ending. The deadline is left
+   null for the next tick to set, so the clock never starts while nobody is
+   watching. */
+function becomeHungry(animal) {
+  animal.state = 'hungry';
+  animal.feedAt = null;
+  animal.starvesAt = null;
+  animal.starvingWarned = false;
+  return animal;
+}
+
+// Shifts every shelf-life and starvation deadline later by an absence, so time
+// spent with the game closed never costs a harvest or an animal. Takes a whole
+// save rather than one list, since both clocks pause for the same reason.
+function shiftPlayClocks(save, byMs) {
   if (!Number.isFinite(byMs) || byMs <= 0) return;
-  plots.forEach((plot) => {
+  save.plots.forEach((plot) => {
     if (Number.isFinite(plot.spoilsAt)) plot.spoilsAt += byMs;
+  });
+  ANIMAL_ORDER.forEach((kind) => {
+    (save[ANIMALS[kind].stateKey] || []).forEach((animal) => {
+      if (Number.isFinite(animal.starvesAt)) animal.starvesAt += byMs;
+    });
   });
 }
 
@@ -288,6 +332,57 @@ function updateSpoilage() {
       changed = true;
     }
   });
+  if (changed) saveState();
+}
+
+function updateStarvation() {
+  const now = Date.now();
+  const lost = [];
+  const nowStarving = [];
+  let changed = false;
+
+  ANIMAL_ORDER.forEach((kind) => {
+    const def = ANIMALS[kind];
+    state[def.stateKey] = state[def.stateKey].filter((animal) => {
+      if (animal.state !== 'hungry') return true;
+      if (!Number.isFinite(animal.starvesAt)) {
+        // First tick that sees it hungry starts the countdown.
+        animal.starvesAt = now + ANIMAL_STARVE_MS;
+        changed = true;
+        return true;
+      }
+      if (now >= animal.starvesAt) {
+        lost.push(def);
+        changed = true;
+        return false;
+      }
+      // One warning per animal, so a neglected barn nags rather than spams.
+      if (isStarving(animal) && !animal.starvingWarned) {
+        animal.starvingWarned = true;
+        nowStarving.push(def);
+        changed = true;
+      }
+      return true;
+    });
+  });
+
+  if (nowStarving.length > 0) {
+    const def = nowStarving[0];
+    const rest = nowStarving.length - 1;
+    SFX.error();
+    showToast(
+      `${def.emoji} A ${def.name} is starving — feed it!`
+      + (rest > 0 ? ` (and ${rest} more)` : ''),
+    );
+  }
+  if (lost.length > 0) {
+    const def = lost[0];
+    const rest = lost.length - 1;
+    SFX.error();
+    showToast(
+      `💀 A ${def.name} starved to death!` + (rest > 0 ? ` (and ${rest} more)` : ''),
+    );
+  }
   if (changed) saveState();
 }
 
@@ -353,9 +448,11 @@ function migrateSave(parsed) {
         id: Number.isFinite(a.id) ? a.id : 0,
         state: a.state === 'producing' ? 'producing' : 'hungry',
         feedAt: Number.isFinite(a.feedAt) ? a.feedAt : null,
+        starvesAt: Number.isFinite(a.starvesAt) ? a.starvesAt : null,
+        starvingWarned: Boolean(a.starvingWarned),
       }))
       // A producing animal with no feed time would never finish.
-      .map((a) => (a.state === 'producing' && a.feedAt === null ? { ...a, state: 'hungry' } : a));
+      .map((a) => (a.state === 'producing' && a.feedAt === null ? becomeHungry(a) : a));
   });
 
   // Re-issue ids so a save with missing or duplicated ones can't collide.
@@ -397,10 +494,11 @@ function migrateSave(parsed) {
   // players as having just arrived rather than reporting a bogus absence.
   if (!Number.isFinite(merged.lastSeenAt)) merged.lastSeenAt = Date.now();
 
-  // Shelf life is measured in play time, so hand back every millisecond this
-  // save spent closed. Without it, loading a save written last night — or
-  // importing one from another device — would rot the whole field on arrival.
-  shiftSpoilClocks(merged.plots, Date.now() - merged.lastSeenAt);
+  // Shelf life and hunger are measured in play time, so hand back every
+  // millisecond this save spent closed. Without it, loading a save written
+  // last night — or importing one from another device — would rot the whole
+  // field and starve the barn on arrival.
+  shiftPlayClocks(merged, Date.now() - merged.lastSeenAt);
 
   return merged;
 }
@@ -889,14 +987,15 @@ function harvestPlot(idx) {
 /* ------------------------------------------------------------------ */
 
 function animalSignature(animal, def, ready) {
+  const hungry = `${isStarving(animal) ? 'starving' : 'hungry'}:${canFeed(def) ? 'fed' : 'nofood'}`;
   // A guardian on duty has no "ready" step — its shift just runs down.
   if (def.guards) {
     if (animal.state === 'producing') return 'onduty';
-    return `hungry:${canFeed(def) ? 'fed' : 'nofood'}`;
+    return hungry;
   }
   if (ready) return 'ready';
   if (animal.state === 'producing') return 'producing';
-  return `hungry:${canFeed(def) ? 'fed' : 'nofood'}`;
+  return hungry;
 }
 
 function buildAnimalCard(card, animal, kind, def, ready, sig) {
@@ -942,9 +1041,23 @@ function buildAnimalCard(card, animal, kind, def, ready, sig) {
     btn.disabled = true;
     card.appendChild(btn);
   } else {
-    stateLabel.className = 'animal-state hungry';
-    stateLabel.textContent = 'Hungry';
+    const starving = isStarving(animal);
+    if (starving) card.classList.add('starving');
+    stateLabel.className = `animal-state hungry${starving ? ' starving' : ''}`;
+    stateLabel.textContent = starving ? '💀 Starving!' : 'Hungry';
     card.appendChild(stateLabel);
+
+    // How long the animal has left before it starves.
+    const bar = document.createElement('div');
+    bar.className = 'animal-progress';
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-label', `${def.name} time left before starving`);
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', '100');
+    const fill = document.createElement('div');
+    fill.className = 'animal-progress-fill hunger';
+    bar.appendChild(fill);
+    card.appendChild(bar);
 
     btn.textContent = feedLabel(def);
     btn.disabled = !canFeed(def);
@@ -1005,7 +1118,9 @@ function renderAnimalList(kind) {
 
     const fill = card.querySelector('.animal-progress-fill');
     if (fill) {
-      const percent = Math.round(progress * 100);
+      // The same bar shows production while fed and hunger while not.
+      const hungry = fill.classList.contains('hunger');
+      const percent = Math.round((hungry ? fedness(animal) : progress) * 100);
       fill.style.width = `${percent}%`;
       fill.parentElement.setAttribute('aria-valuenow', String(percent));
     }
@@ -1025,6 +1140,8 @@ function feedAnimal(kind, id) {
   state.inventory[def.feed.good] -= def.feed.amount;
   animal.state = 'producing';
   animal.feedAt = nowSec();
+  animal.starvesAt = null;
+  animal.starvingWarned = false;
   SFX.feed();
   saveState();
   render();
@@ -1049,8 +1166,7 @@ function updateGuardians() {
     const def = ANIMALS[kind];
     state[def.stateKey].forEach((a) => {
       if (a.state === 'producing' && animalProgress(a, def) >= 1) {
-        a.state = 'hungry';
-        a.feedAt = null;
+        becomeHungry(a);
         changed = true;
       }
     });
@@ -1136,8 +1252,7 @@ function collectAnimal(kind, id) {
     'gain',
   );
   showToast(`Collected ${def.produceYield}x ${def.produceEmoji}`);
-  animal.state = 'hungry';
-  animal.feedAt = null;
+  becomeHungry(animal);
   saveState();
   render();
 }
@@ -1182,7 +1297,7 @@ function buyAnimal(kind) {
     return;
   }
   state.coins -= cost;
-  state[def.stateKey].push({ id: state.nextAnimalId++, state: 'hungry', feedAt: null });
+  state[def.stateKey].push(becomeHungry({ id: state.nextAnimalId++ }));
   SFX.buy();
   showToast(`Bought a new ${def.name}!`);
   saveState();
@@ -1677,6 +1792,10 @@ function tick() {
   if (document.hidden) return;
   updateDay();
   updateSpoilage();
+  // Before starvation, so a guardian coming off shift starts its hunger clock
+  // on the same tick rather than the next one.
+  updateGuardians();
+  updateStarvation();
   updateRaids();
   render();
   state.lastSeenAt = Date.now();
@@ -1711,10 +1830,10 @@ function handleVisibilityChange() {
     // notes queued against a context the OS has frozen.
     if (audioCtx && audioCtx.state === 'running') audioCtx.suspend().catch(() => {});
   } else {
-    // Shelf life only burns down while someone is actually playing, so hand
-    // back the time spent in the background. If we adopted another tab's save
-    // instead, migrateSave has already done that for its copy of the plots.
-    if (!adoptNewerSave()) shiftSpoilClocks(state.plots, Date.now() - state.lastSeenAt);
+    // Shelf life and hunger only burn down while someone is actually playing,
+    // so hand back the time spent in the background. If we adopted another
+    // tab's save instead, migrateSave has already done that for its copy.
+    if (!adoptNewerSave()) shiftPlayClocks(state, Date.now() - state.lastSeenAt);
     // Push any raid that fell due while away out to a fresh interval.
     const now = Date.now();
     if (now >= state.nextWolfRaidAt) state.nextWolfRaidAt = scheduleRaid(WOLF_RAID_MIN_MS, WOLF_RAID_MAX_MS);

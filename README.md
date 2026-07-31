@@ -32,6 +32,12 @@ npm run serve     # http://localhost:4173
   carrot and returns 28. Feed one to start production, then collect milk,
   eggs or wool when the timer finishes. Animals can be sold back for half
   their base price.
+- **Hunger** — an animal left hungry for four in-game days starves and is
+  gone. Its bar counts down to that instead of up to produce, and the card
+  turns red with a pulsing **Starving!** and a one-off warning for the final
+  day. Selling a starving animal still recovers half its price, and — as with
+  crops — the clock only runs while the game is open, so nothing dies while
+  you are away.
 - **Guardians** — a **dog** (fed on eggs) chases off the wolves that
   otherwise carry away livestock, and a **cat** (fed on milk) keeps crows
   from eating planted crops. Both protect only while fed: a guardian works a
@@ -102,9 +108,9 @@ npm test
 ```
 
 `tests/game.spec.js` covers the core loop, animal production, guardians and
-raids, crop spoilage, the market, upgrades, achievements, the day cycle, save
-loading/migration, the welcome-back summary, keyboard operability, and offline
-play. It also asserts that the
+raids, crop spoilage, animal starvation, the market, upgrades, achievements,
+the day cycle, save loading/migration, the welcome-back summary, keyboard
+operability, and offline play. It also asserts that the
 once-a-second render reuses DOM nodes, since rebuilding them would silently
 restart every CSS animation.
 

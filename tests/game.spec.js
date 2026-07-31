@@ -525,6 +525,147 @@ test.describe('spoilage', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Starvation                                                          */
+/* ------------------------------------------------------------------ */
+
+test.describe('starvation', () => {
+  const ANIMAL_STARVE_MS = 4 * DAY_LENGTH_MS;
+
+  const hungryCow = (extra = {}) => [{ id: 1, state: 'hungry', feedAt: null, ...extra }];
+
+  /** Moves the cow's deadline to a chosen point and runs the starvation pass. */
+  const setDeadline = (page, at) => page.evaluate((t) => {
+    state.cows[0].starvesAt = t;
+    updateStarvation();
+    render();
+  }, at);
+
+  const openAnimals = (page) => page.getByRole('button', { name: /Animals/ }).click();
+
+  test('a hungry animal starts a starvation countdown', async ({ page }) => {
+    await load(page, makeSave({ cows: hungryCow(), nextAnimalId: 2 }));
+    await openAnimals(page);
+
+    // The production bar doubles as the hunger gauge while the animal waits.
+    await expect(page.locator('#cowList .animal-progress-fill.hunger')).toHaveCount(1);
+
+    await expect.poll(async () => (await readSave(page)).cows[0].starvesAt)
+      .toBeGreaterThan(Date.now());
+    const { starvesAt } = (await readSave(page)).cows[0];
+    expect(starvesAt).toBeLessThanOrEqual(Date.now() + ANIMAL_STARVE_MS);
+  });
+
+  test('the last stretch before death is flagged as starving', async ({ page }) => {
+    await load(page, makeSave({ cows: hungryCow(), nextAnimalId: 2 }));
+    await openAnimals(page);
+    await expect(page.locator('#cowList .animal-state.hungry')).toHaveCount(1);
+
+    // Well inside the final quarter of the window, but not past it.
+    await setDeadline(page, Date.now() + 0.1 * ANIMAL_STARVE_MS);
+
+    await expect(page.locator('#cowList .animal-state.starving')).toHaveCount(1);
+    await expect(page.locator('#toast')).toContainText('is starving');
+    expect((await readSave(page)).cows[0].starvingWarned).toBe(true);
+  });
+
+  test('an animal left hungry too long dies', async ({ page }) => {
+    await load(page, makeSave({ cows: hungryCow(), nextAnimalId: 2 }));
+    await openAnimals(page);
+    await expect(page.locator('#cowList .animal-card')).toHaveCount(1);
+
+    await setDeadline(page, Date.now() - 1);
+
+    await expect(page.locator('#toast')).toContainText('starved to death');
+    expect((await readSave(page)).cows).toEqual([]);
+    await expect(page.locator('#cowList p')).toHaveCount(1); // empty-state text
+  });
+
+  test('feeding resets the clock', async ({ page }) => {
+    await load(page, makeSave({
+      cows: hungryCow(),
+      nextAnimalId: 2,
+      inventory: { wheat: 0, corn: 4, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
+    }));
+    await openAnimals(page);
+
+    // On the brink, then fed with a moment to spare.
+    await setDeadline(page, Date.now() + 0.05 * ANIMAL_STARVE_MS);
+    await expect(page.locator('#cowList .animal-state.starving')).toHaveCount(1);
+    await page.locator('#cowList .animal-btn').click();
+
+    const s = await readSave(page);
+    expect(s.cows[0].state).toBe('producing');
+    expect(s.cows[0].starvesAt).toBeNull();
+    expect(s.cows[0].starvingWarned).toBe(false);
+
+    // ...and once the milk is collected it gets a full window again.
+    await page.evaluate((t) => { state.cows[0].feedAt = t; }, secondsAgo(60));
+    await page.locator('#cowList .animal-btn').click(); // collect
+    await expect.poll(async () => (await readSave(page)).cows[0].starvesAt)
+      .toBeGreaterThan(Date.now() + 0.9 * ANIMAL_STARVE_MS);
+  });
+
+  test('hunger does not burn down while the game is closed', async ({ page }) => {
+    const away = 30 * 60 * 1000;
+    await load(page, makeSave({
+      // Walked away with about half the window left; long gone since.
+      cows: hungryCow({ starvesAt: Date.now() - away + 0.5 * ANIMAL_STARVE_MS }),
+      nextAnimalId: 2,
+      lastSeenAt: Date.now() - away,
+      dayStartedAt: Date.now() - away,
+    }));
+    await openAnimals(page);
+
+    await expect(page.locator('#cowList .animal-card')).toHaveCount(1);
+    await expect(page.locator('#cowList .animal-state.starving')).toHaveCount(0);
+    const { starvesAt } = (await readSave(page)).cows[0];
+    expect(starvesAt - Date.now()).toBeGreaterThan(0.4 * ANIMAL_STARVE_MS);
+  });
+
+  test('a save from before starvation keeps its animals', async ({ page }) => {
+    await load(page, makeSave({
+      cows: [{ id: 1, state: 'hungry', feedAt: null }], // no starvesAt field at all
+      nextAnimalId: 2,
+    }));
+    await openAnimals(page);
+
+    await expect(page.locator('#cowList .animal-card')).toHaveCount(1);
+    // A fresh window starts from arrival rather than from whenever it was fed.
+    await expect.poll(async () => (await readSave(page)).cows[0].starvesAt)
+      .toBeGreaterThan(Date.now());
+  });
+
+  test('guardians starve too', async ({ page }) => {
+    await load(page, makeSave({
+      dogs: [{ id: 90, state: 'hungry', feedAt: null }],
+      nextAnimalId: 91,
+    }));
+    await openAnimals(page);
+
+    await expect(page.locator('#dogList .animal-progress-fill.hunger')).toHaveCount(1);
+    await page.evaluate(() => {
+      state.dogs[0].starvesAt = Date.now() - 1;
+      updateStarvation();
+      render();
+    });
+
+    await expect(page.locator('#toast')).toContainText('starved to death');
+    expect((await readSave(page)).dogs).toEqual([]);
+  });
+
+  test('a starving animal can still be sold rather than lost', async ({ page }) => {
+    await load(page, makeSave({ coins: 0, cows: hungryCow(), nextAnimalId: 2 }));
+    await openAnimals(page);
+
+    await setDeadline(page, Date.now() + 0.05 * ANIMAL_STARVE_MS);
+    await expect(page.locator('#cowList .animal-state.starving')).toHaveCount(1);
+
+    await page.locator('#cowList .animal-btn-sell').click();
+    await expect.poll(() => coins(page)).toBe(50); // half the 100-coin base cost
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Market + achievements                                               */
 /* ------------------------------------------------------------------ */
 

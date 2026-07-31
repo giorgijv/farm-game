@@ -1166,12 +1166,34 @@ body {
   overflow: hidden;
 }
 
+/* A starving animal is about to be lost, so it gets more than a colour: the
+   label pulses to pull the eye to the card that still needs feeding. */
+.animal-state.starving {
+  color: #a3231b;
+  animation: starvingPulse 1s ease-in-out infinite;
+}
+
+@keyframes starvingPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.62; transform: scale(1.06); }
+}
+
 .animal-progress-fill {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(180deg, #ffdc74, var(--gold-dark));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
   transition: width 0.9s linear;
+}
+
+/* While hungry the same bar counts down to starvation instead of up to
+   produce — green with time in hand, red once the animal is in trouble. */
+.animal-progress-fill.hunger {
+  background: linear-gradient(180deg, #a4ef7f, var(--good-dark));
+}
+
+.animal-card.starving .animal-progress-fill.hunger {
+  background: linear-gradient(180deg, #f4906a, #c33a1e);
 }
 
 /* Shared chunky button recipe for animal actions. */
