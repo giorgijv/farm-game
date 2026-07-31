@@ -1099,6 +1099,19 @@ body {
   text-shadow: 0 1px 3px rgba(34, 68, 18, 0.85);
 }
 
+/* Guard coverage readout, on the green field alongside .group-note. */
+.guard-status {
+  margin: -4px 0 10px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: #f2ffe4;
+  text-shadow: 0 1px 3px rgba(34, 68, 18, 0.85);
+}
+
+.guard-status.short {
+  color: #ffd8a0;
+}
+
 .animal-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));

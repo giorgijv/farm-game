@@ -1152,6 +1152,40 @@ function renderAnimalList(kind) {
   });
 }
 
+/* Coverage is the whole point of owning guardians, so it gets its own line
+   rather than being something the player has to infer from lost animals. */
+function renderGuardStatus(kind) {
+  const el = document.getElementById(`${kind}GuardStatus`);
+  if (!el) return;
+
+  const def = ANIMALS[kind];
+  const charges = guardedCount(kind);
+  const noun = kind === 'dog'
+    ? (charges === 1 ? 'animal' : 'animals')
+    : (charges === 1 ? 'planted plot' : 'planted plots');
+  const onDuty = onDutyCount(kind);
+  const covered = Math.min(guardCapacity(kind), charges);
+  const short = covered < charges;
+
+  let text;
+  if (charges === 0) {
+    text = kind === 'dog'
+      ? 'No livestock to guard yet.'
+      : 'Nothing planted to guard yet.';
+  } else if (onDuty === 0) {
+    text = `⚠️ No ${pluralOf(def)} on duty — all ${charges} ${noun} unguarded.`;
+  } else if (short) {
+    const needed = Math.ceil(charges / GUARD_CAPACITY) - onDuty;
+    text = `⚠️ ${onDuty} on duty, covering ${covered} of ${charges} ${noun}`
+      + ` — feed or buy ${needed} more.`;
+  } else {
+    text = `🛡️ ${onDuty} on duty — all ${charges} ${noun} covered.`;
+  }
+
+  el.textContent = text;
+  el.classList.toggle('short', charges > 0 && short);
+}
+
 function feedAnimal(kind, id) {
   const def = ANIMALS[kind];
   const animal = state[def.stateKey].find((a) => a.id === id);
@@ -1176,12 +1210,44 @@ function feedAnimal(kind, id) {
 /* Guardians and raids                                                   */
 /* ------------------------------------------------------------------ */
 
+/* One fed guardian can only be in so many places at once. Each covers this
+   many of its charges — livestock for a dog, planted plots for a cat — so a
+   farm that grows has to grow its guard with it. A full sixteen-plot field
+   takes four cats; a dozen animals take three dogs. */
+const GUARD_CAPACITY = 4;
+
 // A guardian is only protecting while its last meal lasts.
-function isOnDuty(kind) {
+function onDutyCount(kind) {
   const def = ANIMALS[kind];
-  return state[def.stateKey].some(
+  return state[def.stateKey].filter(
     (a) => a.state === 'producing' && animalProgress(a, def) < 1,
-  );
+  ).length;
+}
+
+function isOnDuty(kind) {
+  return onDutyCount(kind) > 0;
+}
+
+// What a guardian kind is responsible for: dogs count the herd, cats count
+// the crops actually in the ground.
+function guardedCount(kind) {
+  if (kind === 'dog') {
+    return LIVESTOCK_ORDER.reduce((n, k) => n + state[ANIMALS[k].stateKey].length, 0);
+  }
+  return state.plots.filter((p) => p.crop && CROPS[p.crop] && !p.rotten).length;
+}
+
+function guardCapacity(kind) {
+  return onDutyCount(kind) * GUARD_CAPACITY;
+}
+
+/* 1 = every charge covered, 0 = none. Cover a fraction of the farm and you
+   turn away that fraction of raids: one dog watching eight animals is in the
+   right place half the time. */
+function guardCoverage(kind) {
+  const charges = guardedCount(kind);
+  if (charges === 0) return 1; // nothing to lose
+  return clamp01(guardCapacity(kind) / charges);
 }
 
 // Guardians have no produce to collect, so their shift simply ends.
@@ -1208,9 +1274,14 @@ function pluralOf(def) {
 }
 
 function resolveWolfRaid() {
-  if (isOnDuty('dog')) {
-    SFX.collect();
-    showToast('🐕 Your dog chased off a wolf!');
+  const guarded = isOnDuty('dog');
+  // Full cover always turns the wolf away; partial cover does so in
+  // proportion, which is what makes a bigger herd need more dogs.
+  if (Math.random() < guardCoverage('dog')) {
+    if (guarded) {
+      SFX.collect();
+      showToast('🐕 Your dogs chased off a wolf!');
+    }
     return;
   }
   const herd = [];
@@ -1224,13 +1295,18 @@ function resolveWolfRaid() {
   const list = state[def.stateKey];
   list.splice(list.findIndex((a) => a.id === taken.id), 1);
   SFX.error();
-  showToast(`🐺 A wolf took one of your ${pluralOf(def)}!`);
+  showToast(guarded
+    ? `🐺 Your dogs were spread too thin — a wolf took one of your ${pluralOf(def)}!`
+    : `🐺 A wolf took one of your ${pluralOf(def)}!`);
 }
 
 function resolvePestRaid() {
-  if (isOnDuty('cat')) {
-    SFX.collect();
-    showToast('🐈 Your cat saw off the crows!');
+  const guarded = isOnDuty('cat');
+  if (Math.random() < guardCoverage('cat')) {
+    if (guarded) {
+      SFX.collect();
+      showToast('🐈 Your cats saw off the crows!');
+    }
     return;
   }
   const planted = state.plots
@@ -1242,7 +1318,9 @@ function resolvePestRaid() {
   const crop = CROPS[hit.plot.crop];
   state.plots[hit.index] = emptyPlot();
   SFX.error();
-  showToast(`🐦 Crows ate your ${crop.name}!`);
+  showToast(guarded
+    ? `🐦 Your cats were spread too thin — crows ate your ${crop.name}!`
+    : `🐦 Crows ate your ${crop.name}!`);
 }
 
 // Raids that came due while the tab was closed are rescheduled rather than
@@ -1929,6 +2007,7 @@ function render() {
     renderPlots();
   } else if (activeTab === 'animals') {
     ANIMAL_ORDER.forEach((kind) => renderAnimalList(kind));
+    GUARDIAN_ORDER.forEach((kind) => renderGuardStatus(kind));
     renderBuyButtons();
   } else if (activeTab === 'market') {
     renderMarket();

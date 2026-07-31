@@ -42,9 +42,14 @@ npm run serve     # http://localhost:4173
 - **Guardians** — a **dog** (fed on eggs) chases off the wolves that
   otherwise carry away livestock, and a **cat** (fed on milk) keeps crows
   from eating planted crops. Both protect only while fed: a guardian works a
-  shift, then goes hungry and needs feeding again. Raids are infrequent and
-  jittered, and any that fall due while the game is closed are skipped rather
-  than resolved, so a farm is never wiped out overnight.
+  shift, then goes hungry and needs feeding again. Each one on duty covers
+  **four** of its charges, so the guard has to grow with the farm — a dozen
+  animals need three dogs, a full sixteen-plot field needs four cats. Cover
+  only part of the farm and you turn away only that share of raids, so a lone
+  dog watching eight animals is in the right place half the time. The Animals
+  tab shows the coverage and warns when it falls short. Raids are infrequent
+  and jittered, and any that fall due while the game is closed are skipped
+  rather than resolved, so a farm is never wiped out overnight.
 - **Market** — sell produce for coins, review your holdings, adjust sound, and
   export or import your save. It also sells four permanent **upgrades** —
   faster crops, faster animals, larger harvests and better prices — each with
@@ -115,9 +120,10 @@ npm test
 ```
 
 `tests/game.spec.js` covers the core loop, animal production, guardians and
-raids, crop spoilage, animal starvation, the market, upgrades, achievements,
-the two dream homes, the day cycle, save loading/migration, the welcome-back
-summary, keyboard operability, and offline play. It also asserts that the
+raids, guard coverage scaling with the farm, crop spoilage, animal starvation,
+the market, upgrades, achievements, the two dream homes, the day cycle, save
+loading/migration, the welcome-back summary, keyboard operability, and offline
+play. It also asserts that the
 once-a-second render reuses DOM nodes, since rebuilding them would silently
 restart every CSS animation.
 

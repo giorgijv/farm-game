@@ -403,6 +403,130 @@ test.describe('guardians', () => {
     // ...and the clock is pushed out rather than firing again immediately.
     expect((await readSave(page)).nextWolfRaidAt).toBeGreaterThan(Date.now());
   });
+
+  /* ---------------------------------------------------------------- */
+  /* Guard coverage: one guardian only covers so much                  */
+  /* ---------------------------------------------------------------- */
+
+  const GUARD_CAPACITY = 4;
+
+  /** Pins the raid roll so partial coverage becomes a deterministic outcome. */
+  const pinRandom = (page, value) =>
+    page.evaluate((v) => { Math.random = () => v; }, value);
+
+  const onDutyDogs = (n) =>
+    Array.from({ length: n }, (_, i) => ({ id: 90 + i, state: 'producing', feedAt: secondsAgo(0) }));
+  const onDutyCats = (n) =>
+    Array.from({ length: n }, (_, i) => ({ id: 70 + i, state: 'producing', feedAt: secondsAgo(0) }));
+  /** A herd of `n` chickens, which are livestock and so wolf bait. */
+  const flock = (n) =>
+    Array.from({ length: n }, (_, i) => ({ id: i + 1, state: 'hungry', feedAt: null }));
+  const plantedPlots = (n) => [
+    ...Array.from({ length: n }, () => ({ crop: 'wheat', plantedAt: secondsAgo(3) })),
+    ...Array.from({ length: PLOT_COUNT - n }, () => ({ crop: null, plantedAt: null })),
+  ];
+  const plantedCount = async (page) =>
+    (await readSave(page)).plots.filter((p) => p.crop).length;
+
+  test('one dog cannot cover a herd of twelve', async ({ page }) => {
+    await load(page, makeSave({ chickens: flock(12), dogs: onDutyDogs(1), nextAnimalId: 100 }));
+    // Coverage is 4/12, so a roll above that gets through.
+    await pinRandom(page, 0.99);
+    await wolfNow(page);
+
+    await expect(page.locator('#toast')).toContainText('spread too thin');
+    expect(await herdSize(page)).toBe(11);
+  });
+
+  test('three dogs do cover a herd of twelve', async ({ page }) => {
+    await load(page, makeSave({ chickens: flock(12), dogs: onDutyDogs(3), nextAnimalId: 100 }));
+    // 3 x 4 = 12: full cover, so even the worst roll is turned away.
+    await pinRandom(page, 0.99);
+    await wolfNow(page);
+
+    await expect(page.locator('#toast')).toContainText('chased off a wolf');
+    expect(await herdSize(page)).toBe(12);
+  });
+
+  test('a herd that outgrows its dog starts losing animals again', async ({ page }) => {
+    // Exactly at capacity: covered.
+    await load(page, makeSave({
+      chickens: flock(GUARD_CAPACITY),
+      dogs: onDutyDogs(1),
+      nextAnimalId: 100,
+    }));
+    await pinRandom(page, 0.99);
+    await wolfNow(page);
+    expect(await herdSize(page)).toBe(GUARD_CAPACITY);
+
+    // Buy one more than the dog can watch and the cover is no longer total.
+    await page.evaluate(() => {
+      state.chickens.push({ id: 500, state: 'hungry', feedAt: null, starvesAt: null });
+    });
+    await wolfNow(page);
+    expect(await herdSize(page)).toBe(GUARD_CAPACITY); // 5 - 1 lost
+  });
+
+  test('one cat cannot cover a full field', async ({ page }) => {
+    await load(page, makeSave({ plots: plantedPlots(12), cats: onDutyCats(1), nextAnimalId: 100 }));
+    await pinRandom(page, 0.99);
+    await pestNow(page);
+
+    await expect(page.locator('#toast')).toContainText('spread too thin');
+    expect(await plantedCount(page)).toBe(11);
+  });
+
+  test('three cats do cover twelve planted plots', async ({ page }) => {
+    await load(page, makeSave({ plots: plantedPlots(12), cats: onDutyCats(3), nextAnimalId: 100 }));
+    await pinRandom(page, 0.99);
+    await pestNow(page);
+
+    await expect(page.locator('#toast')).toContainText('saw off the crows');
+    expect(await plantedCount(page)).toBe(12);
+  });
+
+  test('a hungry guardian contributes no cover', async ({ page }) => {
+    await load(page, makeSave({
+      chickens: flock(4),
+      // Two dogs, but only one has been fed.
+      dogs: [
+        { id: 90, state: 'producing', feedAt: secondsAgo(0) },
+        { id: 91, state: 'hungry', feedAt: null },
+      ],
+      nextAnimalId: 100,
+    }));
+
+    expect(await page.evaluate(() => guardCapacity('dog'))).toBe(GUARD_CAPACITY);
+  });
+
+  test('the animals tab reports how much of the farm is covered', async ({ page }) => {
+    await load(page, makeSave({ chickens: flock(9), dogs: onDutyDogs(1), nextAnimalId: 100 }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+
+    const status = page.locator('#dogGuardStatus');
+    await expect(status).toContainText('covering 4 of 9 animals');
+    await expect(status).toContainText('buy 2 more');
+    await expect(status).toHaveClass(/short/);
+
+    // Feed enough dogs to close the gap and the warning clears.
+    await page.evaluate(() => {
+      state.dogs.push(
+        { id: 91, state: 'producing', feedAt: Date.now() / 1000 },
+        { id: 92, state: 'producing', feedAt: Date.now() / 1000 },
+      );
+      render();
+    });
+    await expect(status).toContainText('all 9 animals covered');
+    await expect(status).not.toHaveClass(/short/);
+  });
+
+  test('an unguarded farm says so plainly', async ({ page }) => {
+    await load(page, makeSave({ chickens: flock(3), nextAnimalId: 100 }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+
+    await expect(page.locator('#dogGuardStatus')).toContainText('all 3 animals unguarded');
+    await expect(page.locator('#catGuardStatus')).toContainText('Nothing planted');
+  });
 });
 
 /* ------------------------------------------------------------------ */
