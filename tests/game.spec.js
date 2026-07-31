@@ -9,6 +9,7 @@ const ACHIEVEMENT_IDS = [
 ];
 const DAY_LENGTH_MS = 90_000;
 const FARMER_MEAL_MS = 3 * DAY_LENGTH_MS;
+const FARMER_COLLAPSE_MS = 4 * DAY_LENGTH_MS;
 const PLOT_COUNT = 16;
 
 /** A complete, current-shape save. Muted so tests never open an AudioContext. */
@@ -364,6 +365,124 @@ test.describe('the farmer', () => {
     await expect(page.locator('#farmerStrip')).not.toHaveClass(/tired/);
     const { farmerFedUntil } = await readSave(page);
     expect(farmerFedUntil - Date.now()).toBeGreaterThan(0.4 * FARMER_MEAL_MS);
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Exhaustion first, then collapse                                   */
+  /* ---------------------------------------------------------------- */
+
+  /** Puts the farmer's meal a chosen distance in the past and runs the pass. */
+  const setFedUntil = (page, at) => page.evaluate((t) => {
+    state.farmerFedUntil = t;
+    updateFarmerHealth();
+    render();
+  }, at);
+
+  test('exhaustion is the first step, not the end', async ({ page }) => {
+    await load(page, makeSave({ farmerFedUntil: Date.now() - 1 }));
+
+    await expect(page.locator('#farmerStrip')).toHaveClass(/tired/);
+    await expect(page.locator('#farmerState')).toContainText('Exhausted');
+    await expect(page.locator('#toast')).toContainText('will collapse');
+    // Still playable — that is the whole point of the first step.
+    expect((await readSave(page)).gameOver).toBe(false);
+    await expect(page.locator('#gameOverOverlay')).toBeHidden();
+  });
+
+  test('the bar switches to counting down to collapse', async ({ page }) => {
+    await load(page, makeSave({ farmerFedUntil: Date.now() - 0.5 * FARMER_COLLAPSE_MS }));
+
+    // Halfway through the grace period, so roughly half the bar is left.
+    const bar = page.locator('#farmerEnergy');
+    await expect(bar).toHaveAttribute('aria-label', 'Time before the farmer collapses');
+    const value = Number(await bar.getAttribute('aria-valuenow'));
+    expect(value).toBeGreaterThan(35);
+    expect(value).toBeLessThan(65);
+  });
+
+  test('the last stretch before collapse is flagged', async ({ page }) => {
+    await load(page, makeSave({ farmerFedUntil: Date.now() - 1 }));
+    await setFedUntil(page, Date.now() - 0.9 * FARMER_COLLAPSE_MS);
+
+    await expect(page.locator('#farmerStrip')).toHaveClass(/critical/);
+    await expect(page.locator('#farmerState')).toContainText('About to collapse');
+    await expect(page.locator('#toast')).toContainText('about to collapse');
+  });
+
+  test('a farmer who never eats collapses, and that is game over', async ({ page }) => {
+    await load(page, makeSave({ farmerFedUntil: Date.now() - 1 }));
+    await setFedUntil(page, Date.now() - FARMER_COLLAPSE_MS - 1);
+
+    await expect(page.locator('#gameOverOverlay')).toBeVisible();
+    await expect(page.locator('#gameOverTitle')).toContainText('collapsed');
+    expect((await readSave(page)).gameOver).toBe(true);
+  });
+
+  test('eating in time clears the warnings and the danger', async ({ page }) => {
+    await load(page, makeSave({
+      farmerFedUntil: Date.now() - 0.9 * FARMER_COLLAPSE_MS,
+      inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 4, milk: 0, egg: 0, wool: 0 },
+    }));
+    await expect(page.locator('#farmerStrip')).toHaveClass(/critical/);
+
+    await page.locator('#farmerFeedBtn').click();
+
+    const s = await readSave(page);
+    expect(s.gameOver).toBe(false);
+    expect(s.farmerWarned).toBe(false);
+    expect(s.farmerCritical).toBe(false);
+    await expect(page.locator('#farmerStrip')).not.toHaveClass(/tired/);
+  });
+
+  test('game over survives a reload rather than resuming a dead farm', async ({ page }) => {
+    await load(page, makeSave({ gameOver: true, farmerFedUntil: Date.now() - FARMER_COLLAPSE_MS }));
+
+    await expect(page.locator('#gameOverOverlay')).toBeVisible();
+    // The farmer picker must not fight it for the screen.
+    await expect(page.locator('#farmerPicker')).toBeHidden();
+  });
+
+  test('starting a new farm clears the loss', async ({ page }) => {
+    page.on('dialog', (d) => d.accept());
+    await load(page, makeSave({ gameOver: true, coins: 4321, day: 40 }));
+
+    await page.locator('#restartBtn').click();
+
+    await expect(page.locator('#gameOverOverlay')).toBeHidden();
+    const s = await readSave(page);
+    expect(s.gameOver).toBe(false);
+    expect(s.day).toBe(1);
+    expect(s.coins).toBeLessThan(4321);
+    expect(s.farmer).toBeNull(); // a new farm asks who is running it
+  });
+
+  test('declining the restart keeps the game-over screen up', async ({ page }) => {
+    page.on('dialog', (d) => d.dismiss());
+    await load(page, makeSave({
+      gameOver: true,
+      coins: 4321,
+      unlockedAchievements: [...ACHIEVEMENT_IDS], // else wealth awards pay out
+    }));
+
+    await page.locator('#restartBtn').click();
+    await page.waitForTimeout(300);
+
+    await expect(page.locator('#gameOverOverlay')).toBeVisible();
+    expect((await readSave(page)).coins).toBe(4321);
+  });
+
+  test('the collapse clock is paused while the game is closed', async ({ page }) => {
+    const away = 40 * 60 * 1000;
+    await load(page, makeSave({
+      // Exhausted with half the grace period left when the tab was closed.
+      farmerFedUntil: Date.now() - away - 0.5 * FARMER_COLLAPSE_MS,
+      lastSeenAt: Date.now() - away,
+      dayStartedAt: Date.now() - away,
+    }));
+
+    // Long enough away to have died several times over on a wall clock.
+    await expect(page.locator('#gameOverOverlay')).toBeHidden();
+    expect((await readSave(page)).gameOver).toBe(false);
   });
 });
 
@@ -1740,7 +1859,7 @@ test.describe('dream homes', () => {
     expect(s.coins).toBe(500);
 
     await expect(card(page, 0)).toHaveClass(/owned/);
-    await expect(houseBtn(page)).toHaveText('🎉 Yours!');
+    await expect(houseBtn(page)).toHaveText('🎉 Yours — see it again');
     await expect(card(page, 1)).toHaveClass(/forfeited/);
     await expect(villaBtn(page)).toBeDisabled();
     await expect(villaBtn(page)).toHaveText('No longer available');
@@ -1785,6 +1904,68 @@ test.describe('dream homes', () => {
     const s = await readSave(page);
     expect(s.dreamHome).toBe('house');
     expect(s.coins).toBe(VILLA_COST + HOUSE_COST);
+  });
+
+  test('buying a home celebrates it from the inside, with fireworks', async ({ page }) => {
+    acceptConfirms(page);
+    await load(page, dreamSave({ coins: HOUSE_COST, day: 12, stats: { totalHarvested: 84, totalCoinsEarned: 30000 } }));
+    await openDream(page);
+    await expect(page.locator('#endingOverlay')).toBeHidden();
+
+    await houseBtn(page).click();
+
+    const ending = page.locator('#endingOverlay');
+    await expect(ending).toBeVisible();
+    await expect(page.locator('#endingTitle')).toContainText('Home at last');
+    // The room is dressed as the cottage that was actually bought.
+    await expect(page.locator('#endingScene')).toHaveClass(/house/);
+    await expect(page.locator('#endingFarmer')).toHaveText('👩‍🌾');
+    // Fireworks are really there, not just a caption.
+    await expect(page.locator('#endingFireworks .firework')).toHaveCount(7);
+    expect(await page.locator('#endingFireworks .spark').count()).toBeGreaterThan(50);
+    // ...and the run is summed up.
+    await expect(page.locator('#endingStats')).toContainText('Days farmed');
+    await expect(page.locator('#endingStats')).toContainText('84');
+  });
+
+  test('the villa gets its own room', async ({ page }) => {
+    acceptConfirms(page);
+    await load(page, dreamSave({ coins: VILLA_COST, farmer: 'male' }));
+    await openDream(page);
+
+    await villaBtn(page).click();
+
+    await expect(page.locator('#endingScene')).toHaveClass(/villa/);
+    await expect(page.locator('#endingScene')).not.toHaveClass(/house/);
+    await expect(page.locator('#endingFarmer')).toHaveText('👨‍🌾');
+  });
+
+  test('the celebration closes and the farm carries on', async ({ page }) => {
+    acceptConfirms(page);
+    await load(page, dreamSave({ coins: HOUSE_COST }));
+    await openDream(page);
+    await houseBtn(page).click();
+    await expect(page.locator('#endingOverlay')).toBeVisible();
+
+    await page.locator('#endingCloseBtn').click();
+
+    await expect(page.locator('#endingOverlay')).toBeHidden();
+    // The sparks are torn down rather than left animating out of sight.
+    await expect(page.locator('#endingFireworks .firework')).toHaveCount(0);
+    // The game is still playable — a home is an ending, not a lockout.
+    await expect(page.locator('#gameOverOverlay')).toBeHidden();
+    expect((await readSave(page)).dreamHome).toBe('house');
+  });
+
+  test('the celebration can be replayed from the owned card', async ({ page }) => {
+    await load(page, dreamSave({ coins: 10, dreamHome: 'villa' }));
+    await openDream(page);
+    await expect(page.locator('#endingOverlay')).toBeHidden();
+
+    await villaBtn(page).click();
+
+    await expect(page.locator('#endingOverlay')).toBeVisible();
+    await expect(page.locator('#endingScene')).toHaveClass(/villa/);
   });
 
   test('the choice survives a reload, and a bogus one is discarded', async ({ page }) => {

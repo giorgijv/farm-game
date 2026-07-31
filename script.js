@@ -102,6 +102,15 @@ const FARMER_MEAL_MS = FARMER_MEAL_DAYS * DAY_LENGTH_MS;
 const TIRED_YIELD_FACTOR = 0.5;
 // Above this there is nothing to gain from another meal, so the button rests.
 const FARMER_FULL_FRACTION = 0.8;
+/* Exhaustion is the warning, not the end. Keep working through it without
+   eating for this long and the farmer collapses and the run is over. Four
+   in-game days is the same grace an animal gets, and comfortably longer than
+   it takes to plant a pumpkin, grow it and harvest it — even on halved
+   harvests, so the way out is always open right up to the last moment. */
+const FARMER_COLLAPSE_DAYS = 4;
+const FARMER_COLLAPSE_MS = FARMER_COLLAPSE_DAYS * DAY_LENGTH_MS;
+// Final quarter of the grace period: the warnings turn urgent.
+const FARMER_CRITICAL_FRACTION = 0.25;
 
 /* Raids. Intervals are deliberately long and jittered so a farm is not under
    constant siege, and anything that fell due while the tab was closed is
@@ -274,6 +283,9 @@ function freshState() {
     dreamHome: null,
     farmer: null,          // chosen on the first run
     farmerFedUntil: null,
+    farmerWarned: false,
+    farmerCritical: false,
+    gameOver: false,
     muted: false,
     musicOn: true,
     volume: 0.7,
@@ -324,6 +336,20 @@ function farmerEnergy() {
 
 function isFarmerTired() {
   return farmerEnergy() <= 0;
+}
+
+// When an exhausted farmer runs out of road. Null while they are still fed.
+function farmerCollapseAt() {
+  if (!Number.isFinite(state.farmerFedUntil)) return null;
+  return state.farmerFedUntil + FARMER_COLLAPSE_MS;
+}
+
+/* How much of the collapse grace period is left, 1 down to 0. Only meaningful
+   once the farmer is already exhausted. */
+function farmerStamina() {
+  const collapseAt = farmerCollapseAt();
+  if (collapseAt === null) return 0;
+  return clamp01((collapseAt - Date.now()) / FARMER_COLLAPSE_MS);
 }
 
 function canFeedFarmer() {
@@ -469,6 +495,52 @@ function updateStarvation() {
   if (changed) saveState();
 }
 
+/* The farmer's own decline, in two steps: exhausted first — a warning that
+   costs half of every harvest but leaves the way out open — and only then,
+   if they still have not eaten, collapse and the end of the run. */
+function updateFarmerHealth() {
+  if (state.gameOver || !state.farmer) return;
+  const collapseAt = farmerCollapseAt();
+  if (collapseAt === null) return;
+
+  if (Date.now() >= collapseAt) {
+    endGame();
+    return;
+  }
+
+  if (!isFarmerTired()) {
+    // Back on their feet: both warnings re-arm for next time.
+    if (state.farmerWarned || state.farmerCritical) {
+      state.farmerWarned = false;
+      state.farmerCritical = false;
+      saveState();
+    }
+    return;
+  }
+
+  if (!state.farmerWarned) {
+    state.farmerWarned = true;
+    SFX.error();
+    showToast(
+      `😩 The farmer is exhausted — every harvest is halved. Eat within `
+      + `${FARMER_COLLAPSE_DAYS} days or they will collapse.`,
+    );
+    saveState();
+  } else if (!state.farmerCritical && farmerStamina() <= FARMER_CRITICAL_FRACTION) {
+    state.farmerCritical = true;
+    SFX.error();
+    showToast('💀 The farmer is about to collapse! Harvest a pumpkin and eat, now.');
+    saveState();
+  }
+}
+
+function endGame() {
+  state.gameOver = true;
+  SFX.error();
+  saveState();
+  render(); // renderGameOver puts the overlay up
+}
+
 function animalProgress(animal, def) {
   if (animal.state !== 'producing' || !Number.isFinite(animal.feedAt)) return 0;
   return clamp01((nowSec() - animal.feedAt) / animalProduceTime(def, animal));
@@ -568,6 +640,9 @@ function migrateSave(parsed) {
   // Saves from before the farmer get the picker on their next load.
   if (!FARMERS[merged.farmer]) merged.farmer = null;
   if (!Number.isFinite(merged.farmerFedUntil)) merged.farmerFedUntil = null;
+  merged.farmerWarned = Boolean(merged.farmerWarned);
+  merged.farmerCritical = Boolean(merged.farmerCritical);
+  merged.gameOver = Boolean(merged.gameOver);
   merged.musicOn = merged.musicOn !== false;
   merged.volume = Number.isFinite(merged.volume) ? Math.min(Math.max(merged.volume, 0), 1) : 0.7;
   merged.muted = Boolean(merged.muted);
@@ -844,6 +919,120 @@ function setActiveTab(tab) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Endings — the celebration, and the game over                         */
+/* ------------------------------------------------------------------ */
+
+const FIREWORK_COUNT = 7;
+const FIREWORK_SPARKS = 14;
+
+/* Bursts of sparks outside the window. Every spark animates transform and
+   opacity only — anything that repaints would stutter with this many of them
+   on screen at once. */
+function spawnFireworks() {
+  const layer = document.getElementById('endingFireworks');
+  layer.innerHTML = '';
+
+  const hues = [45, 12, 340, 200, 280, 100, 25];
+  for (let i = 0; i < FIREWORK_COUNT; i += 1) {
+    const burst = document.createElement('div');
+    burst.className = 'firework';
+    burst.style.left = `${8 + Math.random() * 84}%`;
+    burst.style.top = `${8 + Math.random() * 46}%`;
+    burst.style.animationDelay = `${(Math.random() * 3.2).toFixed(2)}s`;
+    burst.style.setProperty('--hue', String(hues[i % hues.length]));
+
+    for (let s = 0; s < FIREWORK_SPARKS; s += 1) {
+      const spark = document.createElement('span');
+      spark.className = 'spark';
+      spark.style.setProperty('--angle', `${(360 / FIREWORK_SPARKS) * s}deg`);
+      spark.style.setProperty('--dist', `${26 + Math.random() * 22}px`);
+      burst.appendChild(spark);
+    }
+    layer.appendChild(burst);
+  }
+}
+
+function statList(el, rows) {
+  el.innerHTML = '';
+  rows.forEach(([label, value]) => {
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    el.appendChild(dt);
+    el.appendChild(dd);
+  });
+}
+
+function runStats() {
+  return [
+    ['Days farmed', String(state.day)],
+    ['Crops harvested', String(state.stats.totalHarvested)],
+    ['Coins earned', state.stats.totalCoinsEarned.toLocaleString('en-GB')],
+    ['Awards', `${state.unlockedAchievements.length} / ${ACHIEVEMENTS.length}`],
+  ];
+}
+
+function showEnding(key) {
+  const home = DREAM_HOMES[key];
+  if (!home) return;
+
+  // The room is dressed differently for a cottage than for a villa.
+  document.getElementById('endingScene').className = `ending-scene ${key}`;
+  document.getElementById('endingFeature').textContent = key === 'villa' ? '🕯️' : '🔥';
+  document.getElementById('endingFarmer').textContent = FARMERS[state.farmer]?.emoji || '👩‍🌾';
+
+  document.getElementById('endingTitle').textContent = `${home.emoji} Home at last!`;
+  document.getElementById('endingBlurb').textContent =
+    `You farmed your way to the ${home.name}. Feet up, fireworks over the fields `
+    + 'you cleared — the whole point of every seed you ever planted.';
+  statList(document.getElementById('endingStats'), runStats());
+
+  spawnFireworks();
+  document.getElementById('endingOverlay').classList.remove('hidden');
+  document.getElementById('endingCloseBtn').focus();
+}
+
+function closeEnding() {
+  document.getElementById('endingOverlay').classList.add('hidden');
+  // Do not leave dozens of sparks animating behind a hidden overlay.
+  document.getElementById('endingFireworks').innerHTML = '';
+}
+
+/* Keeps the overlay in step with the save, so a reload after a collapse comes
+   back to the same screen rather than a farm that cannot be played. */
+function renderGameOver() {
+  const overlay = document.getElementById('gameOverOverlay');
+  if (state.gameOver) {
+    if (overlay.classList.contains('hidden')) showGameOver();
+  } else {
+    overlay.classList.add('hidden');
+  }
+}
+
+function showGameOver() {
+  document.getElementById('gameOverText').textContent =
+    'Nobody fed them. With no one left to work the fields the farm goes quiet — '
+    + 'the crops rot where they stand and the animals wander off.';
+  statList(document.getElementById('gameOverStats'), runStats());
+  document.getElementById('gameOverOverlay').classList.remove('hidden');
+  document.getElementById('restartBtn').focus();
+}
+
+function restartGame() {
+  const confirmed = window.confirm(
+    'Start a new farm?\n\nThis clears the farm you just lost and begins again '
+    + 'from an empty field.',
+  );
+  if (!confirmed) return;
+  state = freshState();
+  saveState();
+  document.getElementById('gameOverOverlay').classList.add('hidden');
+  setActiveTab('farm');
+  showToast('A fresh field, and a new farmer. Good luck!');
+}
+
+/* ------------------------------------------------------------------ */
 /* How to play                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -1018,7 +1207,7 @@ function closeHelp() {
    somebody before any of it means anything. */
 function renderFarmerPicker() {
   const picker = document.getElementById('farmerPicker');
-  const needed = !state.farmer;
+  const needed = !state.farmer && !state.gameOver;
   picker.classList.toggle('hidden', !needed);
   if (!needed) return;
 
@@ -1064,15 +1253,25 @@ function renderFarmer() {
   const strip = document.getElementById('farmerStrip');
   strip.classList.toggle('tired', tired);
 
-  const stateEl = document.getElementById('farmerState');
-  stateEl.textContent = tired
-    ? '😩 Exhausted — harvests are halved'
-    : energy <= 0.25 ? '🥱 Getting hungry' : '💪 Well fed';
+  /* Once exhausted the bar stops reporting energy and starts reporting how
+     long there is before the farmer collapses — by then that is the number
+     that matters. */
+  const stamina = farmerStamina();
+  const critical = tired && stamina <= FARMER_CRITICAL_FRACTION;
+  strip.classList.toggle('critical', critical);
 
-  const percent = Math.round(energy * 100);
+  const stateEl = document.getElementById('farmerState');
+  stateEl.textContent = critical
+    ? '💀 About to collapse — eat now!'
+    : tired ? '😩 Exhausted — harvests halved, eat soon'
+      : energy <= 0.25 ? '🥱 Getting hungry' : '💪 Well fed';
+
+  const percent = Math.round((tired ? stamina : energy) * 100);
   const fill = document.getElementById('farmerEnergyFill');
   fill.style.width = `${percent}%`;
-  document.getElementById('farmerEnergy').setAttribute('aria-valuenow', String(percent));
+  const bar = document.getElementById('farmerEnergy');
+  bar.setAttribute('aria-valuenow', String(percent));
+  bar.setAttribute('aria-label', tired ? 'Time before the farmer collapses' : 'Farmer energy');
 
   const btn = document.getElementById('farmerFeedBtn');
   const full = energy >= FARMER_FULL_FRACTION;
@@ -1097,6 +1296,8 @@ function feedFarmer() {
   }
   state.inventory[FARMER_MEAL.good] -= FARMER_MEAL.amount;
   state.farmerFedUntil = Date.now() + FARMER_MEAL_MS;
+  state.farmerWarned = false;
+  state.farmerCritical = false;
   SFX.feed();
   showToast(`${FARMERS[state.farmer].emoji} Back to full strength!`);
   saveState();
@@ -2392,8 +2593,8 @@ function renderDream() {
       const btn = document.createElement('button');
       btn.className = 'dream-btn';
       if (isOwned) {
-        btn.textContent = '🎉 Yours!';
-        btn.disabled = true;
+        btn.textContent = '🎉 Yours — see it again';
+        btn.onclick = () => showEnding(key);
       } else if (forfeited) {
         btn.textContent = 'No longer available';
         btn.disabled = true;
@@ -2441,6 +2642,7 @@ function buyDreamHome(key) {
   spawnFloatText(home.emoji, document.getElementById('dreamList'), 'gain');
   saveState();
   render();
+  showEnding(key);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2451,6 +2653,7 @@ function render() {
   updateGuardians();
   checkAchievements();
   renderTopbar();
+  renderGameOver();
   renderFarmerPicker();
   if (activeTab === 'farm') {
     document.getElementById('onboardingBanner').classList.toggle('hidden', state.onboarded);
@@ -2482,6 +2685,7 @@ function tick() {
   // on the same tick rather than the next one.
   updateGuardians();
   updateStarvation();
+  updateFarmerHealth();
   updateRaids();
   render();
   state.lastSeenAt = Date.now();
@@ -2544,6 +2748,10 @@ function init() {
   });
   document.getElementById('muteBtn').addEventListener('click', toggleMute);
   document.getElementById('helpBtn').addEventListener('click', openHelp);
+  document.getElementById('endingCloseBtn').addEventListener('click', closeEnding);
+  document.getElementById('restartBtn').addEventListener('click', restartGame);
+  document.getElementById('gameOverLoadBtn')
+    .addEventListener('click', () => document.getElementById('loadSaveInput').click());
   document.getElementById('helpCloseBtn').addEventListener('click', closeHelp);
   document.getElementById('helpPanel').addEventListener('click', (e) => {
     if (e.target.id === 'helpPanel') closeHelp(); // tap the backdrop to dismiss

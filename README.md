@@ -23,10 +23,14 @@ screen can never drift from the rules being enforced.
 
 - **The farmer** — the first thing a new game asks is who is running the place:
   a female or male farmer. They do every job here, and they eat too. A meal of
-  **2 pumpkins** keeps them going for three in-game days; run out and they are
-  exhausted, and every harvest is halved until they eat again. A tired harvest
-  never yields nothing, so a farmer can always work their way back to a
-  pumpkin. The choice can be changed later under Market → Farmer.
+  **2 pumpkins** keeps them going for three in-game days.
+  Going hungry happens in two steps. First they are **exhausted**: every
+  harvest is halved, and the bar switches from energy to a countdown. Keep
+  working through that without eating for four more in-game days and they
+  **collapse — that is game over**, with the run summed up and the option to
+  start a new farm or load a save. A tired harvest never yields nothing, so
+  the way out stays open right up to the last moment. The choice of farmer can
+  be changed later under Market → Farmer.
 - **Farm** — pick a seed (wheat, corn, carrot or pumpkin) and plant it on an
   empty plot. Crops grow through seed → sprout → ripe; tap a ripe plot to
   harvest. Eight of the sixteen plots start locked and are bought one at a
@@ -77,7 +81,10 @@ screen can never drift from the rules being enforced.
   either/or — buying one takes the other off the market for good, so the run
   ends on a choice between cashing out early and holding out for twice the
   price. Both cards show live progress towards their price, and the purchase
-  asks for confirmation because it cannot be undone.
+  asks for confirmation because it cannot be undone. Buying one rolls the
+  ending: your new home from the inside — a beamed cottage or a marble villa —
+  with fireworks over the fields through the window and the run summed up. It
+  can be replayed any time from the owned card.
 
 Sound effects and the background music loop are synthesised with the Web Audio
 API — there are no audio files. Music, volume and a master mute live under
@@ -138,7 +145,8 @@ npm test
 production, guardians and raids, guard coverage scaling with the farm, feeding
 a dog on livestock, crop spoilage, animal starvation, the market, upgrades,
 achievements, the two dream homes, the day cycle, save loading/migration, the
-welcome-back summary, the help panel, keyboard operability, and offline play. It also asserts that the
+welcome-back summary, the help panel, the farmer's collapse and game over,
+the ending celebration, keyboard operability, and offline play. It also asserts that the
 once-a-second render reuses DOM nodes, since rebuilding them would silently
 restart every CSS animation.
 

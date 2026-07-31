@@ -169,6 +169,47 @@
 
   </div>
 
+  <!-- The ending: the home you bought, seen from the inside, with fireworks. -->
+  <div id="endingOverlay" class="ending hidden" role="dialog" aria-modal="true"
+       aria-labelledby="endingTitle">
+    <!-- Back to front: floor, then the window in the wall, then the room. -->
+    <div class="ending-scene" id="endingScene">
+      <div class="ending-floor"></div>
+      <div class="ending-window">
+        <div class="ending-sky"></div>
+        <div class="ending-hills"></div>
+        <div class="ending-fireworks" id="endingFireworks" aria-hidden="true"></div>
+        <div class="ending-frame"></div>
+      </div>
+      <div class="ending-feature" id="endingFeature" aria-hidden="true"></div>
+      <div class="ending-rug"></div>
+      <div class="ending-table"><span class="ending-lamp"></span></div>
+      <div class="ending-sofa"></div>
+      <div class="ending-farmer" id="endingFarmer" aria-hidden="true"></div>
+    </div>
+    <div class="ending-card">
+      <h2 id="endingTitle"></h2>
+      <p id="endingBlurb"></p>
+      <dl class="ending-stats" id="endingStats"></dl>
+      <button id="endingCloseBtn" class="ending-btn">Keep farming</button>
+    </div>
+  </div>
+
+  <!-- Game over: the farmer collapsed. -->
+  <div id="gameOverOverlay" class="gameover hidden" role="dialog" aria-modal="true"
+       aria-labelledby="gameOverTitle">
+    <div class="gameover-panel">
+      <div class="gameover-emoji" aria-hidden="true">💀</div>
+      <h2 id="gameOverTitle">The farmer collapsed</h2>
+      <p id="gameOverText"></p>
+      <dl class="ending-stats" id="gameOverStats"></dl>
+      <div class="gameover-actions">
+        <button id="restartBtn" class="ending-btn">Start a new farm</button>
+        <button id="gameOverLoadBtn" class="ending-btn secondary">Load a save</button>
+      </div>
+    </div>
+  </div>
+
   <div id="helpPanel" class="help-panel hidden" role="dialog" aria-modal="true"
        aria-labelledby="helpTitle">
     <div class="help-inner">
