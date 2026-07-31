@@ -368,6 +368,52 @@ test.describe('the farmer', () => {
   });
 
   /* ---------------------------------------------------------------- */
+  /* Pronouns follow the farmer that was picked                        */
+  /* ---------------------------------------------------------------- */
+
+  test('a female farmer is she/her', async ({ page }) => {
+    await load(page, makeSave({ farmer: 'female', farmerFedUntil: Date.now() - 1 }));
+
+    await expect(page.locator('#toast')).toContainText('she will collapse');
+    expect(await page.evaluate(() => farmerPronouns()))
+      .toMatchObject({ they: 'she', them: 'her', their: 'her' });
+  });
+
+  test('a male farmer is he/him', async ({ page }) => {
+    await load(page, makeSave({ farmer: 'male', farmerFedUntil: Date.now() - 1 }));
+
+    await expect(page.locator('#toast')).toContainText('he will collapse');
+    expect(await page.evaluate(() => farmerPronouns()))
+      .toMatchObject({ they: 'he', them: 'him', their: 'his' });
+  });
+
+  test('the game-over text uses the right pronoun', async ({ page }) => {
+    await load(page, makeSave({ farmer: 'male', gameOver: true }));
+    await expect(page.locator('#gameOverText')).toContainText('Nobody fed him');
+
+    await load(page, makeSave({ farmer: 'female', gameOver: true }));
+    await expect(page.locator('#gameOverText')).toContainText('Nobody fed her');
+  });
+
+  test('feeding messages address the chosen farmer', async ({ page }) => {
+    await load(page, makeSave({
+      farmer: 'female',
+      farmerFedUntil: Date.now() + 1000,
+      inventory: { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 0, egg: 0, wool: 0 },
+    }));
+
+    await page.evaluate(() => feedFarmer()); // no pumpkins to hand
+    await expect(page.locator('#toast')).toContainText('to keep her going');
+  });
+
+  test('before anyone is picked the game says they/them', async ({ page }) => {
+    await load(page, makeSave({ farmer: null, farmerFedUntil: null }));
+
+    expect(await page.evaluate(() => farmerPronouns()))
+      .toMatchObject({ they: 'they', them: 'them', their: 'their' });
+  });
+
+  /* ---------------------------------------------------------------- */
   /* Exhaustion first, then collapse                                   */
   /* ---------------------------------------------------------------- */
 

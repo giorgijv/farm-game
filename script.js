@@ -88,9 +88,12 @@ const SLAUGHTER_CONFIRM = ['cow', 'sheep'];
    milking — and has to eat like everything else on the farm. Pumpkins are the
    richest crop, so they are what a stretch of work costs. */
 const FARMERS = {
-  female: { emoji: '👩‍🌾', label: 'Female farmer' },
-  male: { emoji: '👨‍🌾', label: 'Male farmer' },
+  female: { emoji: '👩‍🌾', label: 'Female farmer', they: 'she', them: 'her', their: 'her' },
+  male: { emoji: '👨‍🌾', label: 'Male farmer', they: 'he', them: 'him', their: 'his' },
 };
+
+// Before a farmer has been picked there is nobody to have pronouns yet.
+const NO_FARMER_PRONOUNS = { they: 'they', them: 'them', their: 'their' };
 
 const FARMER_ORDER = ['female', 'male'];
 const FARMER_MEAL = { good: 'pumpkin', amount: 2 };
@@ -338,7 +341,13 @@ function isFarmerTired() {
   return farmerEnergy() <= 0;
 }
 
-// When an exhausted farmer runs out of road. Null while they are still fed.
+/* The player picks their farmer's gender on the first screen, so the game
+   addresses that farmer by it rather than defaulting to they/them. */
+function farmerPronouns() {
+  return FARMERS[state.farmer] || NO_FARMER_PRONOUNS;
+}
+
+// When an exhausted farmer runs out of road. Null while still fed.
 function farmerCollapseAt() {
   if (!Number.isFinite(state.farmerFedUntil)) return null;
   return state.farmerFedUntil + FARMER_COLLAPSE_MS;
@@ -523,13 +532,14 @@ function updateFarmerHealth() {
     SFX.error();
     showToast(
       `😩 The farmer is exhausted — every harvest is halved. Eat within `
-      + `${FARMER_COLLAPSE_DAYS} days or they will collapse.`,
+      + `${FARMER_COLLAPSE_DAYS} days or ${farmerPronouns().they} will collapse.`,
     );
     saveState();
   } else if (!state.farmerCritical && farmerStamina() <= FARMER_CRITICAL_FRACTION) {
     state.farmerCritical = true;
     SFX.error();
-    showToast('💀 The farmer is about to collapse! Harvest a pumpkin and eat, now.');
+    showToast(`💀 The farmer is about to collapse! Harvest a pumpkin and feed `
+      + `${farmerPronouns().them}, now.`);
     saveState();
   }
 }
@@ -1011,8 +1021,9 @@ function renderGameOver() {
 }
 
 function showGameOver() {
+  const { them } = farmerPronouns();
   document.getElementById('gameOverText').textContent =
-    'Nobody fed them. With no one left to work the fields the farm goes quiet — '
+    `Nobody fed ${them}. With no one left to work the fields the farm goes quiet — `
     + 'the crops rot where they stand and the animals wander off.';
   statList(document.getElementById('gameOverStats'), runStats());
   document.getElementById('gameOverOverlay').classList.remove('hidden');
@@ -1066,6 +1077,9 @@ function helpSections() {
         + 'Let the energy bar empty and you are exhausted — every harvest is halved '
         + 'until you eat again. It never drops to nothing, so you can always harvest '
         + 'your way back to a meal.',
+        `Exhaustion is a warning, not the end. Ignore it for ${days(FARMER_COLLAPSE_DAYS)} `
+        + 'and the farmer collapses — that is game over, and the only way on is a new '
+        + 'farm or a loaded save. The bar counts down to it once exhaustion sets in.',
         'Your choice of farmer can be changed any time under Market → Farmer.',
       ],
     },
@@ -1291,7 +1305,8 @@ function feedFarmer() {
   if (!canFeedFarmer()) {
     SFX.error();
     const good = GOODS[FARMER_MEAL.good];
-    showToast(`The farmer needs ${FARMER_MEAL.amount} ${good.name} to keep going!`);
+    showToast(`The farmer needs ${FARMER_MEAL.amount} ${good.name} `
+      + `to keep ${farmerPronouns().them} going!`);
     return;
   }
   state.inventory[FARMER_MEAL.good] -= FARMER_MEAL.amount;

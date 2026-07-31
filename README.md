@@ -30,7 +30,8 @@ screen can never drift from the rules being enforced.
   **collapse — that is game over**, with the run summed up and the option to
   start a new farm or load a save. A tired harvest never yields nothing, so
   the way out stays open right up to the last moment. The choice of farmer can
-  be changed later under Market → Farmer.
+  be changed later under Market → Farmer. The game refers to your farmer by the
+  gender you picked — he/him or she/her.
 - **Farm** — pick a seed (wheat, corn, carrot or pumpkin) and plant it on an
   empty plot. Crops grow through seed → sprout → ripe; tap a ripe plot to
   harvest. Eight of the sixteen plots start locked and are bought one at a
