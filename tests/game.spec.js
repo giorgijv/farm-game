@@ -84,6 +84,136 @@ const secondsAgo = (s) => Date.now() / 1000 - s;
 /* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
+/* How to play, and readable messages                                  */
+/* ------------------------------------------------------------------ */
+
+test.describe('explanations', () => {
+  const helpPanel = (page) => page.locator('#helpPanel');
+
+  test('a help panel explains every system in the game', async ({ page }) => {
+    await load(page, makeSave());
+    await expect(helpPanel(page)).toBeHidden();
+
+    await page.locator('#helpBtn').click();
+    await expect(helpPanel(page)).toBeVisible();
+
+    const text = await page.locator('#helpBody').textContent();
+    // Every system the player can run into should be covered somewhere.
+    for (const topic of [
+      'dream home', 'exhausted', 'seed', 'rots', 'produce',
+      'starves', 'Wolves', 'upgrades', 'achievements', 'day passes', 'saves',
+    ]) {
+      expect(text, `help should mention "${topic}"`).toContain(topic);
+    }
+  });
+
+  test('the help text quotes the same numbers the game enforces', async ({ page }) => {
+    await load(page, makeSave());
+    await page.locator('#helpBtn').click();
+    const text = await page.locator('#helpBody').textContent();
+
+    // Pulled from the live constants, so the two cannot drift apart.
+    const facts = await page.evaluate(() => ({
+      spoil: `${CROP_SPOIL_DAYS} days`,
+      starve: `${ANIMAL_STARVE_DAYS} days`,
+      capacity: `covers ${GUARD_CAPACITY}`,
+      house: DREAM_HOMES.house.cost.toLocaleString('en-GB'),
+      villa: DREAM_HOMES.villa.cost.toLocaleString('en-GB'),
+      cowShift: `${DOG_PREY.cow.shiftTime}s`,
+    }));
+    Object.entries(facts).forEach(([name, value]) => {
+      expect(text, `help should quote ${name}`).toContain(value);
+    });
+  });
+
+  test('the help panel closes again', async ({ page }) => {
+    await load(page, makeSave());
+    await page.locator('#helpBtn').click();
+    await expect(helpPanel(page)).toBeVisible();
+
+    await page.locator('#helpCloseBtn').click();
+    await expect(helpPanel(page)).toBeHidden();
+
+    // Escape works too, for anyone on a keyboard.
+    await page.locator('#helpBtn').click();
+    await expect(helpPanel(page)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(helpPanel(page)).toBeHidden();
+  });
+
+  test('messages stay up long enough to read, and longer ones stay longer', async ({ page }) => {
+    await load(page, makeSave());
+
+    const [short, long] = await page.evaluate(() => [
+      toastDuration('Sold.'),
+      toastDuration('x'.repeat(90)),
+    ]);
+    // The old fixed 1600ms was too brief for anything but a glance.
+    expect(short).toBeGreaterThanOrEqual(2000);
+    expect(long).toBeGreaterThan(short);
+  });
+
+  test('a toast never swallows a tap meant for the field beneath it', async ({ page }) => {
+    await load(page, makeSave({ selectedSeed: null }));
+
+    // Messages linger now, so they must stay click-through or they would block
+    // the plots they sit over.
+    await page.locator('#plotsGrid .plot.empty').first().click();
+    await expect(page.locator('#toast')).toBeVisible();
+    expect(await page.evaluate(() =>
+      getComputedStyle(document.getElementById('toast')).pointerEvents)).toBe('none');
+  });
+
+  test('a lost crop says what would have prevented it', async ({ page }) => {
+    await load(page, makeSave({
+      plots: [
+        { crop: 'wheat', plantedAt: secondsAgo(3) },
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+    }));
+
+    await page.evaluate(() => { state.nextPestRaidAt = Date.now(); updateRaids(); });
+    await expect(page.locator('#toast')).toContainText('A fed cat would have kept them off');
+  });
+
+  test('a lost animal says what would have prevented it', async ({ page }) => {
+    await load(page, makeSave({
+      cows: [{ id: 1, state: 'hungry', feedAt: null }],
+      nextAnimalId: 2,
+    }));
+
+    await page.evaluate(() => { state.nextWolfRaidAt = Date.now(); updateRaids(); });
+    await expect(page.locator('#toast')).toContainText('A fed dog would have chased it off');
+  });
+
+  test('a halved harvest says why it was halved', async ({ page }) => {
+    await load(page, makeSave({
+      plots: [
+        { crop: 'wheat', plantedAt: secondsAgo(60) },
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+      farmerFedUntil: Date.now() - 1,
+      unlockedAchievements: [...ACHIEVEMENT_IDS], // else an award toast lands on top
+    }));
+
+    await page.locator('#plotsGrid > *').first().click();
+    await expect(page.locator('#toast')).toContainText('the farmer is exhausted');
+  });
+
+  test('clearing a rotten plot explains the shelf life that was missed', async ({ page }) => {
+    await load(page, makeSave({
+      plots: [
+        { crop: 'wheat', plantedAt: secondsAgo(60), spoilsAt: Date.now() - 1, rotten: true },
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+    }));
+
+    await page.locator('#plotsGrid > *').first().click();
+    await expect(page.locator('#toast')).toContainText('ripe crops keep for');
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* The farmer                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -327,9 +457,59 @@ test.describe('animals', () => {
     await expect.poll(async () => (await inventory(page)).milk).toBe(2);
 
     const before = await coins(page);
+    page.on('dialog', (d) => d.accept()); // selling asks for confirmation
     await page.locator('#cowList .animal-btn-sell').click();
     await expect.poll(() => coins(page)).toBe(before + 50); // half of base cost
     await expect(page.locator('#cowList p')).toHaveCount(1); // empty-state text
+  });
+
+  test('selling an animal asks first, and declining keeps it', async ({ page }) => {
+    page.on('dialog', (d) => d.dismiss());
+    await load(page, makeSave({
+      coins: 0,
+      cows: [{ id: 1, state: 'hungry', feedAt: null }],
+      nextAnimalId: 2,
+    }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+
+    await page.locator('#cowList .animal-btn-sell').click();
+    await page.waitForTimeout(300);
+
+    const s = await readSave(page);
+    expect(s.cows).toHaveLength(1);
+    expect(s.coins).toBe(0);
+    await expect(page.locator('#cowList .animal-card')).toHaveCount(1);
+  });
+
+  test('the sell prompt names the refund and the cost of buying back', async ({ page }) => {
+    const messages = [];
+    page.on('dialog', (d) => { messages.push(d.message()); d.dismiss(); });
+    await load(page, makeSave({
+      cows: [{ id: 1, state: 'hungry', feedAt: null }],
+      nextAnimalId: 2,
+    }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+
+    await page.locator('#cowList .animal-btn-sell').click();
+    await expect.poll(() => messages.length).toBe(1);
+    expect(messages[0]).toContain('50 coins');   // half the 100-coin base
+    expect(messages[0]).toContain('170 coins');  // buying another, one already owned
+  });
+
+  test('accepting the prompt sells the animal', async ({ page }) => {
+    page.on('dialog', (d) => d.accept());
+    await load(page, makeSave({
+      coins: 0,
+      sheep: [{ id: 1, state: 'hungry', feedAt: null }],
+      nextAnimalId: 2,
+      unlockedAchievements: [...ACHIEVEMENT_IDS],
+    }));
+    await page.getByRole('button', { name: /Animals/ }).click();
+
+    await page.locator('#sheepList .animal-btn-sell').click();
+
+    await expect.poll(() => coins(page)).toBe(75); // half the 150-coin base
+    expect((await readSave(page)).sheep).toEqual([]);
   });
 
   test('feeding is blocked without enough crops', async ({ page }) => {
@@ -1078,6 +1258,7 @@ test.describe('starvation', () => {
     await setDeadline(page, Date.now() + 0.05 * ANIMAL_STARVE_MS);
     await expect(page.locator('#cowList .animal-state.starving')).toHaveCount(1);
 
+    page.on('dialog', (d) => d.accept());
     await page.locator('#cowList .animal-btn-sell').click();
     await expect.poll(() => coins(page)).toBe(50); // half the 100-coin base cost
   });

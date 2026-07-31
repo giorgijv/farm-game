@@ -37,6 +37,7 @@
       <div class="stats">
         <span id="coinsLabel" class="coin-badge">💰 0</span>
         <span id="dayLabel" class="day-badge">☀️ Day 1</span>
+        <button id="helpBtn" class="mute-btn" title="How to play" aria-label="How to play">❓</button>
         <button id="muteBtn" class="mute-btn" title="Toggle sound"></button>
       </div>
     </header>
@@ -166,6 +167,17 @@
       </span>
     </footer>
 
+  </div>
+
+  <div id="helpPanel" class="help-panel hidden" role="dialog" aria-modal="true"
+       aria-labelledby="helpTitle">
+    <div class="help-inner">
+      <div class="help-head">
+        <h2 id="helpTitle">📖 How Farm Life works</h2>
+        <button id="helpCloseBtn" class="help-close" aria-label="Close">✕</button>
+      </div>
+      <div class="help-body" id="helpBody"></div>
+    </div>
   </div>
 
   <div id="farmerPicker" class="farmer-picker hidden" role="dialog" aria-modal="true"

@@ -15,6 +15,10 @@ browser, or serve the folder:
 npm run serve     # http://localhost:4173
 ```
 
+The **❓ button** in the top bar opens a full rundown of every system in the
+game. It is generated from the same constants the game runs on, so the rules on
+screen can never drift from the rules being enforced.
+
 ## How it works
 
 - **The farmer** — the first thing a new game asks is who is running the place:
@@ -38,7 +42,8 @@ npm run serve     # http://localhost:4173
   and returns 5, a cow costs 12 of corn and returns 18, a sheep costs 20 of
   carrot and returns 28. Feed one to start production, then collect milk,
   eggs or wool when the timer finishes. Animals can be sold back for half
-  their base price.
+  their base price — selling asks for confirmation first, since the Sell
+  button sits under Feed and buying a replacement costs more than the refund.
 - **Hunger** — an animal left hungry for four in-game days starves and is
   gone. Its bar counts down to that instead of up to produce, and the card
   turns red with a pulsing **Starving!** and a one-off warning for the final
@@ -133,7 +138,7 @@ npm test
 production, guardians and raids, guard coverage scaling with the farm, feeding
 a dog on livestock, crop spoilage, animal starvation, the market, upgrades,
 achievements, the two dream homes, the day cycle, save loading/migration, the
-welcome-back summary, keyboard operability, and offline play. It also asserts that the
+welcome-back summary, the help panel, keyboard operability, and offline play. It also asserts that the
 once-a-second render reuses DOM nodes, since rebuilding them would silently
 restart every CSS animation.
 

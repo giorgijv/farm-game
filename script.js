@@ -462,7 +462,8 @@ function updateStarvation() {
     const rest = lost.length - 1;
     SFX.error();
     showToast(
-      `💀 A ${def.name} starved to death!` + (rest > 0 ? ` (and ${rest} more)` : ''),
+      `💀 A ${def.name} starved to death!${rest > 0 ? ` (and ${rest} more)` : ''}`
+      + ' Feed animals before their bar empties.',
     );
   }
   if (changed) saveState();
@@ -644,12 +645,24 @@ function clamp01(x) {
 }
 
 let toastTimer = null;
+/* Toasts explain what just happened, so they have to stay up long enough to
+   actually be read. Time scales with the length of the message — a short
+   confirmation clears quickly, an explanation of why an animal was lost
+   lingers — and a tap dismisses one early. */
+const TOAST_BASE_MS = 2200;
+const TOAST_PER_CHAR_MS = 55;
+const TOAST_MAX_MS = 8000;
+
+function toastDuration(msg) {
+  return Math.min(TOAST_MAX_MS, TOAST_BASE_MS + msg.length * TOAST_PER_CHAR_MS);
+}
+
 function showToast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.classList.remove('hidden');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.add('hidden'), 1600);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), toastDuration(msg));
 }
 
 // "+3 🌾" numbers that drift up from whatever the player just tapped.
@@ -828,6 +841,173 @@ function setActiveTab(tab) {
   document.getElementById('achievementsTab').classList.toggle('hidden', tab !== 'achievements');
   document.getElementById('dreamTab').classList.toggle('hidden', tab !== 'dream');
   render();
+}
+
+/* ------------------------------------------------------------------ */
+/* How to play                                                          */
+/* ------------------------------------------------------------------ */
+
+/* Built from the same constants the game runs on, so the rules on screen can
+   never drift away from the rules being enforced. */
+function helpSections() {
+  const seconds = (ms) => `${Math.round(ms / 1000)}s`;
+  const days = (n) => `${n} ${n === 1 ? 'day' : 'days'}`;
+  const dayLen = seconds(DAY_LENGTH_MS);
+  const mealGood = GOODS[FARMER_MEAL.good];
+  const meal = `${FARMER_MEAL.amount} ${mealGood.emoji} `
+    + `${mealGood.name.toLowerCase()}${FARMER_MEAL.amount === 1 ? '' : 's'}`;
+
+  return [
+    {
+      emoji: '🎯', title: 'The point of it all',
+      lines: [
+        'Grow crops, sell what you produce, and build the farm up until you can '
+        + 'afford a dream home. That is the finish line — everything else feeds into it.',
+        `The two goals live in the Dream tab: a ${DREAM_HOMES.house.name} for `
+        + `${DREAM_HOMES.house.cost.toLocaleString('en-GB')}💰 or a `
+        + `${DREAM_HOMES.villa.name} for ${DREAM_HOMES.villa.cost.toLocaleString('en-GB')}💰. `
+        + 'Buying one puts the other out of reach for good, so it is one or the other.',
+      ],
+    },
+    {
+      emoji: FARMERS[state.farmer]?.emoji || '👩‍🌾', title: 'You, the farmer',
+      lines: [
+        'You do every job here: planting, harvesting, feeding, milking. And you eat.',
+        `A meal of ${meal} keeps you working for ${days(FARMER_MEAL_DAYS)}. `
+        + 'Let the energy bar empty and you are exhausted — every harvest is halved '
+        + 'until you eat again. It never drops to nothing, so you can always harvest '
+        + 'your way back to a meal.',
+        'Your choice of farmer can be changed any time under Market → Farmer.',
+      ],
+    },
+    {
+      emoji: '🌾', title: 'Crops',
+      lines: [
+        'Pick a seed, then tap an empty plot to plant it. Seeds cost coins up front '
+        + 'and the crop sells for more than it cost, so every cycle is a profit.',
+        'The four crops trade speed for value: wheat is quick and cheap, pumpkin is '
+        + 'slow and worth the most. The bar on each plot shows how far along it is.',
+        `Eight of the ${PLOT_COUNT} plots start locked. Unlock the rest one at a time `
+        + 'with coins, each a little dearer than the last.',
+      ],
+    },
+    {
+      emoji: '🥀', title: 'Crops go off',
+      lines: [
+        `Once a crop is ripe you have ${days(CROP_SPOIL_DAYS)} to harvest it. The plot's `
+        + 'bar switches from growth to freshness and drains; in the last stretch it '
+        + 'turns red with an ⏳.',
+        'Leave it too long and it rots. A rotten plot yields nothing and has to be '
+        + 'tapped to clear before you can plant again.',
+        'The spoilage clock only runs while the game is open, so closing the tab '
+        + 'never costs you a harvest.',
+      ],
+    },
+    {
+      emoji: '🐄', title: 'Animals and produce',
+      lines: [
+        'Buy cows, chickens and sheep from the Animals tab. Each eats its own crop, '
+        + 'and the better the produce the dearer the feed — a chicken eats wheat and '
+        + 'lays eggs, a cow eats corn and gives milk, a sheep eats carrots and gives wool.',
+        'Feed one to start it producing, then collect when the timer fills. Every '
+        + 'cycle returns more than the feed cost.',
+        'An animal you no longer want can be sold back for half its base price. '
+        + 'Selling asks first, since buying a replacement costs more than the refund.',
+      ],
+    },
+    {
+      emoji: '💀', title: 'Animals get hungry',
+      lines: [
+        `An animal left hungry for ${days(ANIMAL_STARVE_DAYS)} starves and is gone. `
+        + 'Its bar counts down to that, and the card turns red with a pulsing '
+        + '"Starving!" for the last stretch.',
+        'A starving animal can still be sold, so it is never a total loss. Like crop '
+        + 'spoilage, the clock is paused while the game is closed.',
+      ],
+    },
+    {
+      emoji: '🐕', title: 'Guardians',
+      lines: [
+        'Wolves take livestock and crows eat planted crops. A fed dog turns wolves '
+        + 'away; a fed cat keeps the crows off.',
+        `Each guardian on duty covers ${GUARD_CAPACITY} of its charges — animals for a `
+        + `dog, planted plots for a cat — so the guard has to grow with the farm. Cover `
+        + 'only part of it and you turn away only that share of raids.',
+        'A cat eats milk. A dog eats meat: feeding one means slaughtering an animal, '
+        + `and the bigger the animal the longer the watch (${DOG_PREY_ORDER
+          .map((k) => `${ANIMALS[k].emoji} ${DOG_PREY[k].shiftTime}s`).join(', ')}).`,
+        'The Animals tab tells you how much of the farm is currently covered.',
+      ],
+    },
+    {
+      emoji: '🛒', title: 'Market',
+      lines: [
+        'Sell produce for coins, and check what you are holding. Prices are fixed '
+        + 'unless you buy Market Contacts.',
+        'Four permanent upgrades give late-game coins somewhere to go: faster crops, '
+        + 'faster animals, bigger harvests and better prices, each with three levels.',
+      ],
+    },
+    {
+      emoji: '🏆', title: 'Awards',
+      lines: [
+        `${ACHIEVEMENTS.length} achievements covering harvesting, livestock, expansion `
+        + 'and wealth. Each pays a one-off coin bonus the moment you earn it.',
+      ],
+    },
+    {
+      emoji: '🌗', title: 'Time, and being away',
+      lines: [
+        `A full day passes every ${dayLen}, taking the sky from daylight through dusk `
+        + 'to a starlit night.',
+        'Crops and animals run on real timestamps, so they keep progressing while the '
+        + 'tab is closed — come back and a summary tells you what finished. Hunger, '
+        + 'spoilage and raids are all paused while you are away, so nothing is ever '
+        + 'lost overnight.',
+      ],
+    },
+    {
+      emoji: '💾', title: 'Saving',
+      lines: [
+        'Progress saves automatically to this browser. Because that is per-browser, '
+        + 'Market → Save Data can download a save file and load it back — useful for '
+        + 'moving between devices or keeping a backup.',
+      ],
+    },
+  ];
+}
+
+function renderHelp() {
+  const body = document.getElementById('helpBody');
+  body.innerHTML = '';
+  helpSections().forEach((section) => {
+    const wrap = document.createElement('section');
+    wrap.className = 'help-section';
+
+    const heading = document.createElement('h3');
+    heading.innerHTML = `<span aria-hidden="true">${section.emoji}</span> `;
+    heading.appendChild(document.createTextNode(section.title));
+    wrap.appendChild(heading);
+
+    section.lines.forEach((line) => {
+      const p = document.createElement('p');
+      p.textContent = line;
+      wrap.appendChild(p);
+    });
+    body.appendChild(wrap);
+  });
+}
+
+function openHelp() {
+  renderHelp();
+  document.getElementById('helpPanel').classList.remove('hidden');
+  document.getElementById('helpCloseBtn').focus();
+  SFX.click();
+}
+
+function closeHelp() {
+  document.getElementById('helpPanel').classList.add('hidden');
+  document.getElementById('helpBtn').focus();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1164,7 +1344,8 @@ function clearRottenPlot(idx) {
   const crop = CROPS[plot.crop];
   state.plots[idx] = emptyPlot();
   SFX.error();
-  showToast(`Cleared the rotten ${crop.name}`);
+  showToast(`Cleared the rotten ${crop.name} — ripe crops keep for `
+    + `${CROP_SPOIL_DAYS} days, so harvest them before the bar runs out.`);
   saveState();
   render();
 }
@@ -1179,7 +1360,8 @@ function harvestPlot(idx) {
   state.stats.totalHarvested += yielded;
   SFX.harvest();
   spawnFloatText(`+${yielded} ${crop.emoji}`, document.getElementById('plotsGrid').children[idx], 'gain');
-  showToast(`Harvested ${yielded}x ${crop.emoji} ${crop.name}`);
+  showToast(`Harvested ${yielded}x ${crop.emoji} ${crop.name}`
+    + (isFarmerTired() ? ' — halved, the farmer is exhausted. Eat a pumpkin!' : ''));
   state.plots[idx] = emptyPlot();
   saveState();
   render();
@@ -1398,7 +1580,8 @@ function feedAnimal(kind, id) {
   if (!canFeed(def)) {
     SFX.error();
     const good = GOODS[def.feed.good];
-    showToast(`A ${def.name} needs ${def.feed.amount} ${good.name}!`);
+    showToast(`A ${def.name} needs ${def.feed.amount} ${good.name} — grow `
+      + `${CROPS[def.feed.good] ? 'and harvest it on the Farm tab' : 'some first'}.`);
     return;
   }
   state.inventory[def.feed.good] -= def.feed.amount;
@@ -1431,7 +1614,8 @@ function feedDog(id, prey) {
   const idx = pickForSlaughter(prey);
   if (idx === -1) {
     SFX.error();
-    showToast(`No ${pluralOf(preyDef)} to spare!`);
+    showToast(`No ${pluralOf(preyDef)} to spare — a dog only eats livestock, `
+      + 'so buy one from the pens below.');
     return;
   }
 
@@ -1549,7 +1733,8 @@ function resolveWolfRaid() {
   SFX.error();
   showToast(guarded
     ? `🐺 Your dogs were spread too thin — a wolf took one of your ${pluralOf(def)}!`
-    : `🐺 A wolf took one of your ${pluralOf(def)}!`);
+      + ` Each dog on duty only covers ${GUARD_CAPACITY} animals.`
+    : `🐺 A wolf took one of your ${pluralOf(def)}! A fed dog would have chased it off.`);
 }
 
 function resolvePestRaid() {
@@ -1572,7 +1757,8 @@ function resolvePestRaid() {
   SFX.error();
   showToast(guarded
     ? `🐦 Your cats were spread too thin — crows ate your ${crop.name}!`
-    : `🐦 Crows ate your ${crop.name}!`);
+      + ` Each cat on duty only covers ${GUARD_CAPACITY} plots.`
+    : `🐦 Crows ate your ${crop.name}! A fed cat would have kept them off.`);
 }
 
 // Raids that came due while the tab was closed are rescheduled rather than
@@ -1618,10 +1804,20 @@ function sellAnimal(kind, id) {
   const idx = list.findIndex((a) => a.id === id);
   if (idx === -1 || list[idx].state !== 'hungry') return;
   const refund = Math.round(def.buyBaseCost * ANIMAL_SELL_REFUND_RATE);
+
+  // Selling is irreversible and buying back costs more than the refund, so
+  // the Sell button sitting right under Feed deserves a check.
+  const buyBack = buyAnimalCost(kind);
+  const confirmed = window.confirm(
+    `Sell this ${def.name} for ${refund} coins?\n\n`
+    + `Buying another would cost ${buyBack} coins.`,
+  );
+  if (!confirmed) return;
+
   list.splice(idx, 1);
   state.coins += refund;
   SFX.sell();
-  showToast(`Sold ${def.name} for ${refund}💰`);
+  showToast(`Sold ${def.name} for ${refund}💰 — buying another now costs ${buyAnimalCost(kind)}💰.`);
   saveState();
   render();
 }
@@ -2347,6 +2543,14 @@ function init() {
     btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
   });
   document.getElementById('muteBtn').addEventListener('click', toggleMute);
+  document.getElementById('helpBtn').addEventListener('click', openHelp);
+  document.getElementById('helpCloseBtn').addEventListener('click', closeHelp);
+  document.getElementById('helpPanel').addEventListener('click', (e) => {
+    if (e.target.id === 'helpPanel') closeHelp(); // tap the backdrop to dismiss
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeHelp();
+  });
   document.getElementById('onboardingDismissBtn').addEventListener('click', dismissOnboarding);
   document.getElementById('welcomeDismissBtn').addEventListener('click', dismissWelcomeBack);
 
