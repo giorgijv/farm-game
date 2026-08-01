@@ -274,7 +274,7 @@ function freshState() {
   return {
     coins: 100,
     day: 1,
-    dayStartedAt: Date.now(),
+    dayElapsedMs: 0,   // play time banked into the current day
     selectedSeed: null,
     unlockedPlots: INITIAL_UNLOCKED_PLOTS,
     plots: Array.from({ length: PLOT_COUNT }, emptyPlot),
@@ -591,7 +591,14 @@ function migrateSave(parsed) {
 
   if (!Number.isFinite(merged.coins)) merged.coins = 0;
   if (!Number.isFinite(merged.day) || merged.day < 1) merged.day = 1;
-  if (!Number.isFinite(merged.dayStartedAt)) merged.dayStartedAt = Date.now();
+  /* The calendar used to run on wall time, anchored to dayStartedAt. It now
+     accumulates only while the game is open, so an old save keeps the day it
+     had reached and simply starts the next one fresh — carrying the old
+     anchor forward would hand over however many days had passed since. */
+  merged.dayElapsedMs = Number.isFinite(parsed.dayElapsedMs)
+    ? Math.min(Math.max(parsed.dayElapsedMs, 0), DAY_LENGTH_MS)
+    : 0;
+  delete merged.dayStartedAt;
 
   // Saves from before plot unlocking have no unlockedPlots and a shorter grid.
   if (!Number.isFinite(merged.unlockedPlots)) merged.unlockedPlots = INITIAL_UNLOCKED_PLOTS;
@@ -1179,16 +1186,19 @@ function helpSections() {
     {
       emoji: '🌗', title: 'Time, and being away',
       lines: [
-        `A full day passes every ${dayLen}, taking the sky from daylight through dusk `
-        + 'to a starlit night.',
+        `A full day passes every ${dayLen} of play, taking the sky from daylight `
+        + 'through dusk to a starlit night. The calendar only runs while the game is '
+        + 'open — close the tab and the clock stops with it, so days are something '
+        + 'you play through rather than wait out.',
         'Crops and animals run on real timestamps, so they keep progressing while the '
         + 'tab is closed — come back and a summary tells you what finished. Hunger, '
         + 'spoilage and raids are all paused while you are away, so nothing is ever '
         + 'lost overnight.',
         `Every ${WEEK_LENGTH_DAYS} days the farm keeps going, a government subsidy `
         + `of ${SUBSIDY_AMOUNT}\uD83D\uDCB0 arrives — the first on day ${WEEK_LENGTH_DAYS + 1}. `
-        + 'Steady but small: enough to stop a struggling farm stalling out, nowhere '
-        + 'near enough to live on.',
+        + 'Those are days of play, not days on the calendar, so the subsidy has to be '
+        + 'earned at the wheel. Steady but small either way: enough to stop a '
+        + 'struggling farm stalling out, nowhere near enough to live on.',
       ],
     },
     {
@@ -2528,7 +2538,7 @@ function skyColorAt(band, nightFactor) {
 function updateDayNightVisuals() {
   // Normalise into [0, 1) so a save from the future (clock change, edited
   // file) can't push the sun off the side of the sky.
-  const rawPhase = (Date.now() - state.dayStartedAt) / DAY_LENGTH_MS;
+  const rawPhase = state.dayElapsedMs / DAY_LENGTH_MS;
   const phase = ((rawPhase % 1) + 1) % 1;
   // Smooth sinusoid: 0 at midday, peaks at 1 in the middle of the cycle (midnight).
   const nightFactor = (1 - Math.cos(2 * Math.PI * phase)) / 2;
@@ -2647,17 +2657,34 @@ function updateSubsidy() {
   saveState();
 }
 
+/* The calendar is banked a tick at a time while the game is open, never read
+   off the wall clock. Coming back to find nine hundred days gone and a purse
+   full of subsidy was free money for doing nothing; days — and so the weekly
+   subsidy that rides on them — now have to be played through.
+
+   The cap matters: a backgrounded tab has its timers throttled, so the first
+   tick after a long absence can be minutes late. Crediting that gap would put
+   the wall clock straight back in charge. */
+const MAX_DAY_STEP_MS = 2000;
+let lastDayTickAt = Date.now();
+
+// Called whenever play resumes, so an absence is never banked as play time.
+function resumeDayClock() {
+  lastDayTickAt = Date.now();
+}
+
 function updateDay() {
-  const elapsed = Date.now() - state.dayStartedAt;
-  if (elapsed >= DAY_LENGTH_MS) {
-    // Advance by every whole day that has passed, not just one. Crops and
-    // animals run off absolute timestamps and so catch up fully after the tab
-    // has been closed; the calendar has to catch up the same way. Carrying the
-    // remainder forward (rather than resetting to now) also keeps the
-    // day/night phase continuous instead of drifting on every rollover.
-    const daysPassed = Math.floor(elapsed / DAY_LENGTH_MS);
+  const now = Date.now();
+  const step = Math.min(Math.max(now - lastDayTickAt, 0), MAX_DAY_STEP_MS);
+  lastDayTickAt = now;
+
+  state.dayElapsedMs += step;
+  if (state.dayElapsedMs >= DAY_LENGTH_MS) {
+    const daysPassed = Math.floor(state.dayElapsedMs / DAY_LENGTH_MS);
     state.day += daysPassed;
-    state.dayStartedAt += daysPassed * DAY_LENGTH_MS;
+    // Carry the remainder so the day/night phase stays continuous across a
+    // rollover instead of snapping back to dawn.
+    state.dayElapsedMs -= daysPassed * DAY_LENGTH_MS;
   }
   updateDayNightVisuals();
 }
@@ -2910,6 +2937,7 @@ function handleVisibilityChange() {
     // notes queued against a context the OS has frozen.
     if (audioCtx && audioCtx.state === 'running') audioCtx.suspend().catch(() => {});
   } else {
+    resumeDayClock(); // the time spent hidden is not play time
     // Shelf life and hunger only burn down while someone is actually playing,
     // so hand back the time spent in the background. If we adopted another
     // tab's save instead, migrateSave has already done that for its copy.
@@ -2976,6 +3004,7 @@ function init() {
   state.lastSeenAt = Date.now();
   saveState();
 
+  resumeDayClock();
   updateDayNightVisuals();
   render();
   showWelcomeBack(awayReport);

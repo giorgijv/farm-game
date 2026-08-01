@@ -78,10 +78,11 @@ screen can never drift from the rules being enforced.
   is skipped under `prefers-reduced-motion`, which still leaves the message.
 - **Subsidy** — a farm starts with **100 coins**, and every seven in-game days
   it keeps going the state pays a **government subsidy of 100 coins** (the
-  first on day 8). Weeks that pass while the tab is closed are all settled on
-  your return. It is deliberately a trickle next to what a worked field earns:
-  enough to stop a struggling farm stalling out, nowhere near enough to make
-  farming optional.
+  first on day 8). Those are days *played*, not days on the wall clock, so the
+  subsidy has to be earned at the wheel — you cannot leave the tab shut for a
+  month and come back to a fortune. It is deliberately a trickle next to what a
+  worked field earns: enough to stop a struggling farm stalling out, nowhere
+  near enough to make farming optional.
 - **Market** — sell produce for coins, review your holdings, adjust sound, and
   export or import your save. It also sells four permanent **upgrades** —
   faster crops, faster animals, larger harvests and better prices — each with
@@ -103,10 +104,17 @@ Sound effects and the background music loop are synthesised with the Web Audio
 API — there are no audio files. Music, volume and a master mute live under
 Market → Sound.
 
-A full day passes every 90 seconds, carrying the sky from daylight through a
-warm dusk to a starlit night. Crops and animals run on real timestamps, so
-they keep progressing while the tab is closed — come back after a while and a
-summary tells you what ripened while you were away.
+A full day passes every 90 seconds **of play**, carrying the sky from daylight
+through a warm dusk to a starlit night. The calendar is banked a tick at a time
+while the game is open and stops dead when it is closed, so days — and the
+weekly subsidy that rides on them — are something you play through rather than
+wait out.
+
+Crops and animals are the exception, and deliberately so: they run on real
+timestamps and keep growing while the tab is closed, so coming back after a
+while still greets you with a summary of what ripened. Everything that costs
+you (spoilage, hunger, starvation, raids) and everything that pays you (the
+calendar, the subsidy) is measured in play time instead.
 
 Progress saves automatically to `localStorage`. Because that is per-browser,
 the Market tab also offers **Download Save** / **Load Save** to back progress

@@ -17,7 +17,7 @@ function makeSave(overrides = {}) {
   return {
     coins: 100,
     day: 1,
-    dayStartedAt: Date.now(),
+    dayElapsedMs: 0,
     selectedSeed: null,
     unlockedPlots: 8,
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null, plantedAt: null })),
@@ -359,7 +359,6 @@ test.describe('the farmer', () => {
     await load(page, makeSave({
       farmerFedUntil: Date.now() - away + 0.5 * FARMER_MEAL_MS,
       lastSeenAt: Date.now() - away,
-      dayStartedAt: Date.now() - away,
     }));
 
     await expect(page.locator('#farmerStrip')).not.toHaveClass(/tired/);
@@ -523,7 +522,6 @@ test.describe('the farmer', () => {
       // Exhausted with half the grace period left when the tab was closed.
       farmerFedUntil: Date.now() - away - 0.5 * FARMER_COLLAPSE_MS,
       lastSeenAt: Date.now() - away,
-      dayStartedAt: Date.now() - away,
     }));
 
     // Long enough away to have died several times over on a wall clock.
@@ -1377,7 +1375,6 @@ test.describe('spoilage', () => {
       // Left the game with about half the window left; long gone since.
       plots: ripeField({ spoilsAt: Date.now() - away + 0.5 * CROP_SPOIL_MS }),
       lastSeenAt: Date.now() - away,
-      dayStartedAt: Date.now() - away,
     }));
 
     await expect(firstPlot(page)).toHaveClass(/ready/);
@@ -1504,7 +1501,6 @@ test.describe('starvation', () => {
       cows: hungryCow({ starvesAt: Date.now() - away + 0.5 * ANIMAL_STARVE_MS }),
       nextAnimalId: 2,
       lastSeenAt: Date.now() - away,
-      dayStartedAt: Date.now() - away,
     }));
     await openAnimals(page);
 
@@ -1645,29 +1641,63 @@ test.describe('incremental rendering', () => {
 /* ------------------------------------------------------------------ */
 
 test.describe('day cycle', () => {
-  test('the calendar catches up on every day missed while away', async ({ page }) => {
-    // One hour away is 40 whole in-game days.
-    await load(page, makeSave({ day: 3, dayStartedAt: Date.now() - 40 * DAY_LENGTH_MS }));
+  test('the calendar does not move while the game is closed', async ({ page }) => {
+    // An old save whose wall-clock anchor is an hour in the past: under the
+    // previous rules that was forty free days.
+    const stale = makeSave({ day: 3 });
+    stale.dayStartedAt = Date.now() - 40 * DAY_LENGTH_MS;
+    await load(page, stale);
+    await page.waitForTimeout(1500);
 
-    await expect.poll(async () => (await readSave(page)).day).toBe(43);
+    const s = await readSave(page);
+    expect(s.day).toBe(3);
+    expect(s.dayStartedAt).toBeUndefined(); // the wall-clock anchor is gone
   });
 
-  test('rollover carries the remainder instead of resetting the clock', async ({ page }) => {
-    // Two-and-a-bit days away: the leftover part-day must survive.
+  test('a long absence is not banked as play time', async ({ page }) => {
+    await load(page, makeSave({ day: 5, dayElapsedMs: 0 }));
+    await page.waitForTimeout(1200);
+
+    // Even a huge gap since the last tick only ever credits one step.
+    await page.evaluate(() => {
+      lastDayTickAt = Date.now() - 60 * 60 * 1000; // an hour of throttled tab
+      updateDay();
+    });
+
+    const s = await readSave(page);
+    expect(s.day).toBe(5);
+    expect(s.dayElapsedMs).toBeLessThan(10_000);
+  });
+
+  test('playing does move the calendar on', async ({ page }) => {
+    // A day's worth of play already banked: the next tick rolls it over.
+    await load(page, makeSave({ day: 4, dayElapsedMs: DAY_LENGTH_MS - 200 }));
+
+    await expect.poll(async () => (await readSave(page)).day).toBe(5);
+  });
+
+  test('rollover carries the remainder instead of snapping back to dawn', async ({ page }) => {
+    await load(page, makeSave({ day: 1 }));
+
+    // Overshoot the boundary on the live clock — a save is clamped to one day,
+    // so this is the only way to land mid-rollover.
     const remainder = 30_000;
-    await load(page, makeSave({
-      day: 1,
-      dayStartedAt: Date.now() - (2 * DAY_LENGTH_MS + remainder),
-    }));
+    const after = await page.evaluate((over) => {
+      state.dayElapsedMs = over;
+      updateDay();
+      return { day: state.day, dayElapsedMs: state.dayElapsedMs };
+    }, DAY_LENGTH_MS + remainder);
 
-    await expect.poll(async () => (await readSave(page)).day).toBe(3);
+    expect(after.day).toBe(2);
+    expect(after.dayElapsedMs).toBeGreaterThanOrEqual(remainder);
+    expect(after.dayElapsedMs).toBeLessThan(DAY_LENGTH_MS);
+  });
 
-    const elapsed = await page.evaluate(
-      (k) => Date.now() - JSON.parse(localStorage.getItem(k)).dayStartedAt,
-      SAVE_KEY,
-    );
-    expect(elapsed).toBeGreaterThanOrEqual(remainder);
-    expect(elapsed).toBeLessThan(DAY_LENGTH_MS);
+  test('a saved part-day is never more than one day', async ({ page }) => {
+    await load(page, makeSave({ day: 1, dayElapsedMs: 5 * DAY_LENGTH_MS }));
+
+    // A save cannot smuggle in banked days it never played.
+    expect((await readSave(page)).day).toBeLessThanOrEqual(2);
   });
 
   test('the sun and moon stay on screen across the whole cycle', async ({ page }) => {
@@ -1675,7 +1705,7 @@ test.describe('day cycle', () => {
 
     for (const fraction of [0, 0.15, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9]) {
       await page.evaluate((offset) => {
-        state.dayStartedAt = Date.now() - offset;
+        state.dayElapsedMs = offset;
         updateDayNightVisuals();
       }, fraction * DAY_LENGTH_MS);
       await page.waitForTimeout(150);
@@ -1742,14 +1772,20 @@ test.describe('government subsidy', () => {
     expect((await readSave(page)).subsidiesPaid).toBe(2);
   });
 
-  test('weeks that passed while away are all settled at once', async ({ page }) => {
-    // Three weeks of calendar go by in one jump.
-    await load(page, subSave({
-      coins: 0,
-      day: 1,
-      subsidiesPaid: 0,
-      dayStartedAt: Date.now() - 22 * DAY_LENGTH_MS,
-    }));
+  test('no subsidy accrues for time spent away from the game', async ({ page }) => {
+    // The old wall-clock anchor says three weeks; none of it was played.
+    const stale = subSave({ coins: 0, day: 1, subsidiesPaid: 0 });
+    stale.dayStartedAt = Date.now() - 22 * DAY_LENGTH_MS;
+    await load(page, stale);
+    await page.waitForTimeout(1500);
+
+    expect(await coins(page)).toBe(0);
+    expect((await readSave(page)).subsidiesPaid).toBe(0);
+  });
+
+  test('several weeks owed are still settled in one payment', async ({ page }) => {
+    // Weeks genuinely played through, e.g. after a burst of catching up.
+    await load(page, subSave({ coins: 0, day: 22, subsidiesPaid: 0 }));
 
     await expect.poll(() => coins(page)).toBe(3 * SUBSIDY);
     await expect(page.locator('#toast')).toContainText('3 weeks of farming');
@@ -1795,7 +1831,6 @@ test.describe('save migration', () => {
     const legacy = {
       coins: 275,
       day: 5,
-      dayStartedAt: Date.now(),
       plots: Array.from({ length: 12 }, () => ({ crop: null, plantedAt: null })),
       cows: [{ id: 1, state: 'hungry', feedAt: null }],
       chickens: [],

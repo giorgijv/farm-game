@@ -13,7 +13,7 @@ function makeSave(overrides = {}) {
   return {
     coins: 900,
     day: 3,
-    dayStartedAt: Date.now(),
+    dayElapsedMs: 0,
     selectedSeed: null,
     unlockedPlots: 9,
     plots: Array.from({ length: PLOT_COUNT }, () => ({ crop: null, plantedAt: null })),
