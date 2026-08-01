@@ -70,6 +70,12 @@ screen can never drift from the rules being enforced.
   tab shows the coverage and warns when it falls short. Raids are infrequent
   and jittered, and any that fall due while the game is closed are skipped
   rather than resolved, so a farm is never wiped out overnight.
+  Raids are played out rather than merely reported: crows sweep in over the
+  field, a wolf comes in low at the pens, and a guardian on duty charges in and
+  drives them off in front of you. Whatever was taken flashes where it stood.
+  The attacker aims at the real tile or card when you are on that tab and
+  crosses mid-screen when you are not, so a raid is never invisible. All of it
+  is skipped under `prefers-reduced-motion`, which still leaves the message.
 - **Subsidy** — a farm starts with **100 coins**, and every seven in-game days
   it keeps going the state pays a **government subsidy of 100 coins** (the
   first on day 8). Weeks that pass while the tab is closed are all settled on

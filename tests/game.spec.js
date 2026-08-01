@@ -1051,6 +1051,135 @@ test.describe('guardians', () => {
   });
 
   /* ---------------------------------------------------------------- */
+  /* You can see the raid happen                                       */
+  /* ---------------------------------------------------------------- */
+
+  const actors = (page, sel = '') => page.locator(`#fxLayer .raid-actor${sel}`);
+  const openFarm = (page) => page.getByRole('button', { name: /Farm/ }).click();
+  const openAnimals = (page) => page.getByRole('button', { name: /Animals/ }).click();
+
+  const oneWheat = () => [
+    { crop: 'wheat', plantedAt: secondsAgo(3) },
+    ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+  ];
+
+  test('crows are shown arriving when they eat a crop', async ({ page }) => {
+    await load(page, makeSave({ plots: oneWheat() }));
+    await openFarm(page);
+
+    await pestNow(page);
+
+    await expect(actors(page, '.crow')).toHaveCount(3);
+    // Undefended, so no cat turns up and the crows leave with it.
+    await expect(actors(page, '.guard')).toHaveCount(0);
+    await expect(actors(page, '.crow.steals')).toHaveCount(3);
+  });
+
+  test('the plot that was raided is flagged where it stands', async ({ page }) => {
+    await load(page, makeSave({ plots: oneWheat() }));
+    await openFarm(page);
+
+    await pestNow(page);
+
+    await expect(page.locator('#plotsGrid .raid-hit')).toHaveCount(1);
+  });
+
+  test('a cat is shown seeing the crows off', async ({ page }) => {
+    await load(page, makeSave({
+      plots: oneWheat(),
+      cats: [{ id: 92, state: 'producing', feedAt: secondsAgo(0) }],
+      nextAnimalId: 93,
+    }));
+    await openFarm(page);
+
+    await pestNow(page);
+
+    await expect(actors(page, '.crow')).toHaveCount(3);
+    await expect(actors(page, '.guard.cat')).toHaveCount(1);
+    // Driven off rather than carrying anything away.
+    await expect(actors(page, '.crow.flees')).toHaveCount(3);
+    expect((await readSave(page)).plots[0].crop).toBe('wheat');
+  });
+
+  test('a wolf is shown arriving when it takes an animal', async ({ page }) => {
+    await load(page, makeSave({
+      cows: [{ id: 1, state: 'hungry', feedAt: null }],
+      nextAnimalId: 2,
+    }));
+    await openAnimals(page);
+
+    await wolfNow(page);
+
+    await expect(actors(page, '.wolf.steals')).toHaveCount(1);
+    await expect(actors(page, '.guard')).toHaveCount(0);
+  });
+
+  test('a dog is shown chasing the wolf off', async ({ page }) => {
+    await load(page, makeSave({
+      cows: [{ id: 1, state: 'hungry', feedAt: null }],
+      dogs: onDutyDog(),
+      nextAnimalId: 91,
+    }));
+    await openAnimals(page);
+
+    await wolfNow(page);
+
+    await expect(actors(page, '.wolf.flees')).toHaveCount(1);
+    await expect(actors(page, '.guard.dog')).toHaveCount(1);
+    expect(await herdSize(page)).toBe(1);
+  });
+
+  test('a raid is still visible from another tab', async ({ page }) => {
+    await load(page, makeSave({ plots: oneWheat() }));
+    await page.getByRole('button', { name: /Market/ }).click();
+
+    await pestNow(page);
+
+    // No plot to aim at from here, but the crows still cross the screen.
+    await expect(actors(page, '.crow')).toHaveCount(3);
+  });
+
+  test('the actors are cleaned up once the raid is over', async ({ page }) => {
+    await load(page, makeSave({ plots: oneWheat() }));
+    await openFarm(page);
+
+    await pestNow(page);
+    await expect(actors(page)).toHaveCount(3);
+
+    await expect(actors(page)).toHaveCount(0, { timeout: 6000 });
+  });
+
+  test('two raids at once do not pile up on screen', async ({ page }) => {
+    await load(page, makeSave({
+      plots: oneWheat(),
+      cows: [{ id: 1, state: 'hungry', feedAt: null }],
+      nextAnimalId: 2,
+    }));
+    await openFarm(page);
+
+    await pestNow(page);
+    await wolfNow(page); // lands while the crows are still in flight
+
+    await expect(actors(page, '.crow')).toHaveCount(3);
+    await expect(actors(page, '.wolf')).toHaveCount(0);
+  });
+
+  test('nothing is animated when the player asked for less motion', async ({ page, browser }) => {
+    const context = await browser.newContext({ reducedMotion: 'reduce' });
+    const quiet = await context.newPage();
+    await load(quiet, makeSave({ plots: oneWheat() }));
+    await openFarm(quiet);
+
+    await pestNow(quiet);
+
+    await expect(quiet.locator('#fxLayer .raid-actor')).toHaveCount(0);
+    // The raid still happened, and is still reported.
+    await expect(quiet.locator('#toast')).toContainText('Crows ate');
+    expect((await readSave(quiet)).plots[0].crop).toBeNull();
+    await context.close();
+  });
+
+  /* ---------------------------------------------------------------- */
   /* Dogs eat livestock                                                */
   /* ---------------------------------------------------------------- */
 

@@ -1154,6 +1154,9 @@ function helpSections() {
         'A cat eats milk. A dog eats meat: feeding one means slaughtering an animal, '
         + `and the bigger the animal the longer the watch (${DOG_PREY_ORDER
           .map((k) => `${ANIMALS[k].emoji} ${DOG_PREY[k].shiftTime}s`).join(', ')}).`,
+        'Raids play out on screen: crows sweep in over the field, a wolf comes for '
+        + 'the pens, and a guardian on duty runs them off in front of you. What was '
+        + 'taken flashes where it stood.',
         'The Animals tab tells you how much of the farm is currently covered.',
       ],
     },
@@ -1944,6 +1947,121 @@ function pluralOf(def) {
   return def.pluralName || `${def.name.toLowerCase()}s`;
 }
 
+/* ------------------------------------------------------------------ */
+/* Raids you can actually watch                                         */
+/* ------------------------------------------------------------------ */
+
+const RAID_FX_MS = 2400;
+const RAID_CROW_COUNT = 3;
+
+let raidFxRunning = false;
+
+function reducedMotion() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/* Where the raid is aimed. When the player is looking at the tab that owns
+   the target, the attacker goes for the real tile or card; otherwise it
+   crosses the middle of the screen, so a raid is never silent just because
+   you happened to be in the market at the time. */
+function raidTargetRect(el) {
+  const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+  if (rect && (rect.width > 0 || rect.height > 0)) return rect;
+  return {
+    left: window.innerWidth / 2 - 24,
+    top: window.innerHeight / 2 - 24,
+    width: 48,
+    height: 48,
+  };
+}
+
+// A red pulse on whatever was just taken, so the loss has a location.
+function flashRaidTarget(el) {
+  if (!el || !el.classList || reducedMotion()) return;
+  el.classList.remove('raid-hit');
+  void el.offsetWidth; // restart it if the class is already on
+  el.classList.add('raid-hit');
+  setTimeout(() => el.classList.remove('raid-hit'), 900);
+}
+
+/* attacker: 'crow' | 'wolf'. defender: 'cat' | 'dog' | null.
+   Presentation only — the outcome is decided and saved before this runs, so a
+   reload mid-flight loses nothing but the animation. */
+function playRaidFx({ attacker, defender, targetEl }) {
+  const layer = document.getElementById('fxLayer');
+  if (!layer || reducedMotion()) return;
+  // One raid on screen at a time; two overlapping would just read as noise.
+  if (raidFxRunning) return;
+  raidFxRunning = true;
+
+  /* Keep the whole set piece on screen. A target can sit low in a tall grid or
+     be scrolled half out of view, and both the attacker and the defender need
+     room either side of it to arrive and leave again. */
+  const rect = raidTargetRect(targetEl);
+  const span = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+  const x = span(rect.left + rect.width / 2, window.innerWidth * 0.25, window.innerWidth * 0.75);
+  const y = span(rect.top + rect.height / 2, window.innerHeight * 0.3, window.innerHeight * 0.7);
+  const actors = [];
+
+  const place = (el) => {
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    layer.appendChild(el);
+    actors.push(el);
+  };
+
+  if (attacker === 'crow') {
+    for (let i = 0; i < RAID_CROW_COUNT; i += 1) {
+      const crow = document.createElement('span');
+      crow.className = `raid-actor crow ${defender ? 'flees' : 'steals'}`;
+      crow.textContent = '\uD83D\uDC26';
+      crow.style.setProperty('--lane', String(i - 1)); // fan them out
+      crow.style.animationDelay = `${(i * 0.14).toFixed(2)}s`;
+      place(crow);
+    }
+  } else {
+    const wolf = document.createElement('span');
+    wolf.className = `raid-actor wolf ${defender ? 'flees' : 'steals'}`;
+    wolf.textContent = '\uD83D\uDC3A';
+    place(wolf);
+  }
+
+  if (defender) {
+    const guard = document.createElement('span');
+    guard.className = `raid-actor guard ${defender}`;
+    guard.textContent = ANIMALS[defender].emoji;
+    place(guard);
+  }
+
+  setTimeout(() => {
+    actors.forEach((el) => el.remove());
+    raidFxRunning = false;
+  }, RAID_FX_MS + 400);
+}
+
+/* A defended raid takes nothing, so there is no victim to aim at. Point it at
+   the field or the pens instead — again, only when that tab is on screen. */
+function fieldAnchor() {
+  return activeTab === 'farm' ? document.getElementById('plotsGrid') : null;
+}
+
+function herdAnchor() {
+  if (activeTab !== 'animals') return null;
+  const kind = LIVESTOCK_ORDER.find((k) => state[ANIMALS[k].stateKey].length > 0);
+  return kind ? document.getElementById(`${kind}List`) : null;
+}
+
+// The tile or card a raid is aimed at, but only while its tab is on screen.
+function plotElement(index) {
+  if (activeTab !== 'farm') return null;
+  return document.getElementById('plotsGrid').children[index] || null;
+}
+
+function animalElement(kind, id) {
+  if (activeTab !== 'animals') return null;
+  return document.querySelector(`#${kind}List [data-animal-id="${id}"]`);
+}
+
 function resolveWolfRaid() {
   const guarded = isOnDuty('dog');
   // Full cover always turns the wolf away; partial cover does so in
@@ -1952,6 +2070,9 @@ function resolveWolfRaid() {
     if (guarded) {
       SFX.collect();
       showToast('🐕 Your dogs chased off a wolf!');
+      // Show the dog earning its keep — otherwise the only sign a guardian
+      // ever did anything is a line of text.
+      playRaidFx({ attacker: 'wolf', defender: 'dog', targetEl: herdAnchor() });
     }
     return;
   }
@@ -1964,6 +2085,10 @@ function resolveWolfRaid() {
   const taken = herd[Math.floor(Math.random() * herd.length)];
   const def = ANIMALS[taken.kind];
   const list = state[def.stateKey];
+  // Grab the card before the animal is removed and the card goes with it.
+  const targetEl = animalElement(taken.kind, taken.id);
+  flashRaidTarget(targetEl);
+  playRaidFx({ attacker: 'wolf', defender: null, targetEl });
   list.splice(list.findIndex((a) => a.id === taken.id), 1);
   SFX.error();
   showToast(guarded
@@ -1978,6 +2103,7 @@ function resolvePestRaid() {
     if (guarded) {
       SFX.collect();
       showToast('🐈 Your cats saw off the crows!');
+      playRaidFx({ attacker: 'crow', defender: 'cat', targetEl: fieldAnchor() });
     }
     return;
   }
@@ -1988,6 +2114,9 @@ function resolvePestRaid() {
 
   const hit = planted[Math.floor(Math.random() * planted.length)];
   const crop = CROPS[hit.plot.crop];
+  const targetEl = plotElement(hit.index);
+  flashRaidTarget(targetEl);
+  playRaidFx({ attacker: 'crow', defender: null, targetEl });
   state.plots[hit.index] = emptyPlot();
   SFX.error();
   showToast(guarded
