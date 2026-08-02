@@ -196,3 +196,21 @@ CHROMIUM_PATH=/path/to/chrome npm test
 ```
 
 CI runs the same suite on every push and pull request.
+
+### Play-testing
+
+`tools/playtest.js` drives the real UI on every difficulty and checks the save
+after every action. Two phases: a real-time bot that plants, harvests, feeds,
+buys and sells, and a stress phase that forces the events a short run cannot
+reach — the weekly subsidy, spoilage, starvation, raids with and without a
+guardian, the farmer's collapse, the ending, and a tier switch on top of each.
+
+```bash
+npm run playtest              # 60s x 2 runs per tier, then the stress phase
+node tools/playtest.js 120 3  # longer runs, more of them
+```
+
+Every scenario asserts what it expected to happen, not merely that nothing
+threw: a structural check alone will happily pass a subsidy that quietly
+forgets to record itself. The harness is verified by injecting known faults and
+confirming it reports them.

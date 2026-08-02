@@ -1104,7 +1104,13 @@ function restartGame() {
     + 'from an empty field.',
   );
   if (!confirmed) return;
+  /* Keep the tier they were playing. Someone who just lost a farm on Hard is
+     asking for another farm, not an easier game — and the picker still comes
+     up, so changing tier is one tap away if that is what they meant. */
+  const tier = state.difficulty;
   state = freshState();
+  state.difficulty = tier;
+  state.coins = DIFFICULTIES[tier].startCoins;
   saveState();
   document.getElementById('gameOverOverlay').classList.add('hidden');
   setActiveTab('farm');
@@ -1465,10 +1471,32 @@ function renderDifficultyChoice(containerId) {
   });
 }
 
+/* Deadlines are stored as absolute times against the window that was in force
+   when they were set, so changing tier mid-run would leave every bar reading
+   against the wrong scale — a half-full crop jumping to a quarter without
+   anything having happened to it. Rescale so the fraction shown survives the
+   change, which is the thing the player is actually watching. */
+function rescaleDeadlines(factor) {
+  if (!Number.isFinite(factor) || factor === 1) return;
+  const now = Date.now();
+  const shift = (at) => now + (at - now) * factor;
+  state.plots.forEach((plot) => {
+    if (Number.isFinite(plot.spoilsAt)) plot.spoilsAt = shift(plot.spoilsAt);
+  });
+  ANIMAL_ORDER.forEach((kind) => {
+    state[ANIMALS[kind].stateKey].forEach((animal) => {
+      if (Number.isFinite(animal.starvesAt)) animal.starvesAt = shift(animal.starvesAt);
+    });
+  });
+  if (Number.isFinite(state.farmerFedUntil)) state.farmerFedUntil = shift(state.farmerFedUntil);
+}
+
 function setDifficulty(key) {
   if (!DIFFICULTIES[key] || state.difficulty === key) return;
   const tier = DIFFICULTIES[key];
+  const wasPatience = difficulty().patience;
   state.difficulty = key;
+  rescaleDeadlines(tier.patience / wasPatience);
   // A brand new farm has not been dealt its purse yet, so match it to the tier.
   if (!state.farmer && state.stats.totalCoinsEarned === 0) state.coins = tier.startCoins;
   SFX.click();

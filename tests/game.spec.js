@@ -330,6 +330,46 @@ test.describe('difficulty', () => {
     expect(text).toContain('of 50');                 // subsidy halved
   });
 
+  test('switching tier keeps every bar reading the same fraction', async ({ page }) => {
+    // Found by the play-tester: deadlines are absolute, so without rescaling a
+    // half-full crop jumps to a quarter the moment the window changes under it.
+    await load(page, makeSave({
+      difficulty: 'hard',
+      plots: [
+        { crop: 'wheat', plantedAt: secondsAgo(600) },
+        ...Array.from({ length: PLOT_COUNT - 1 }, () => ({ crop: null, plantedAt: null })),
+      ],
+      cows: [{ id: 1, state: 'hungry', feedAt: null }],
+      nextAnimalId: 2,
+    }));
+
+    const before = await page.evaluate(() => {
+      updateSpoilage(); updateStarvation();
+      return { crop: freshness(state.plots[0]), cow: fedness(state.cows[0]), farmer: farmerEnergy() };
+    });
+    const after = await page.evaluate(() => {
+      setDifficulty('relaxed');
+      return { crop: freshness(state.plots[0]), cow: fedness(state.cows[0]), farmer: farmerEnergy() };
+    });
+
+    for (const k of ['crop', 'cow', 'farmer']) {
+      expect(Math.abs(after[k] - before[k]), `${k} bar jumped on a tier change`).toBeLessThan(0.05);
+    }
+  });
+
+  test('starting a new farm keeps the tier you were playing', async ({ page }) => {
+    // Losing a farm on Hard is a request for another farm, not an easier game.
+    page.on('dialog', (d) => d.accept());
+    await load(page, makeSave({ difficulty: 'hard', gameOver: true, coins: 900 }));
+
+    await page.locator('#restartBtn').click();
+
+    const s = await readSave(page);
+    expect(s.difficulty).toBe('hard');
+    expect(s.coins).toBe(50);   // Hard's opening purse, not the default 100
+    expect(s.gameOver).toBe(false);
+  });
+
   test('an unknown tier in a save falls back rather than breaking the rules', async ({ page }) => {
     await load(page, makeSave({ difficulty: 'impossible' }));
 
