@@ -67,6 +67,48 @@ const ANIMALS = {
 const LIVESTOCK_ORDER = ['cow', 'chicken', 'sheep'];
 const GUARDIAN_ORDER = ['dog', 'cat'];
 const ANIMAL_ORDER = [...LIVESTOCK_ORDER, ...GUARDIAN_ORDER];
+/* Three tiers, tuned to the levers the economy actually turns on: what produce
+   fetches, how long the farm waits before punishing neglect, how often raids
+   land, and how big the state's hand-out is. The dream homes stay at 20,000
+   and 40,000 on every tier, so the difficulty shows up as how long the run
+   takes rather than as a different finish line. */
+const DIFFICULTIES = {
+  relaxed: {
+    name: 'Relaxed', emoji: '🌻',
+    blurb: 'Better prices, forgiving clocks, raids few and far between. A game '
+      + 'about growing things.',
+    price: 1.25, patience: 2, raidGap: 1.6, subsidy: 1.5, startCoins: 200,
+  },
+  farmer: {
+    name: 'Farmer', emoji: '🚜',
+    blurb: 'The farm as intended. Crops spoil, animals starve, and the wolves '
+      + 'know where you live.',
+    price: 1, patience: 1, raidGap: 1, subsidy: 1, startCoins: 100,
+  },
+  hard: {
+    name: 'Hard', emoji: '🌪️',
+    blurb: 'Lean prices, short fuses, raids twice as often and a subsidy barely '
+      + 'worth the paperwork. Nothing waits for you.',
+    price: 0.8, patience: 0.5, raidGap: 0.55, subsidy: 0.5, startCoins: 50,
+  },
+};
+
+const DIFFICULTY_ORDER = ['relaxed', 'farmer', 'hard'];
+const DEFAULT_DIFFICULTY = 'farmer';
+
+function difficulty() {
+  return DIFFICULTIES[state.difficulty] || DIFFICULTIES[DEFAULT_DIFFICULTY];
+}
+
+/* Every tunable the tiers touch reads through one of these, so a tier is a
+   row in the table above rather than a change scattered through the rules. */
+function cropSpoilMs()      { return CROP_SPOIL_MS * difficulty().patience; }
+function animalStarveMs()   { return ANIMAL_STARVE_MS * difficulty().patience; }
+function farmerMealMs()     { return FARMER_MEAL_MS * difficulty().patience; }
+function farmerCollapseMs() { return FARMER_COLLAPSE_MS * difficulty().patience; }
+function subsidyAmount()    { return Math.round(SUBSIDY_AMOUNT * difficulty().subsidy); }
+function raidGap(ms)        { return ms * difficulty().raidGap; }
+
 const ANIMAL_SELL_REFUND_RATE = 0.5;
 
 /* Every week the farm keeps going, the state chips in. It is a small,
@@ -272,7 +314,7 @@ const ACHIEVEMENTS = [
 
 function freshState() {
   return {
-    coins: 100,
+    coins: DIFFICULTIES[DEFAULT_DIFFICULTY].startCoins,
     day: 1,
     dayElapsedMs: 0,   // play time banked into the current day
     selectedSeed: null,
@@ -291,6 +333,7 @@ function freshState() {
     unlockedAchievements: [],
     upgrades: { sprinkler: 0, feed: 0, fertiliser: 0, contacts: 0 },
     subsidiesPaid: 0,
+    difficulty: DEFAULT_DIFFICULTY,
     dreamHome: null,
     farmer: null,          // chosen on the first run
     farmerFedUntil: null,
@@ -342,7 +385,7 @@ function cropYield(crop) {
    play time only, so nobody comes back from a break to a starving farmer. */
 function farmerEnergy() {
   if (!Number.isFinite(state.farmerFedUntil)) return 0;
-  return clamp01((state.farmerFedUntil - Date.now()) / FARMER_MEAL_MS);
+  return clamp01((state.farmerFedUntil - Date.now()) / farmerMealMs());
 }
 
 function isFarmerTired() {
@@ -358,7 +401,7 @@ function farmerPronouns() {
 // When an exhausted farmer runs out of road. Null while still fed.
 function farmerCollapseAt() {
   if (!Number.isFinite(state.farmerFedUntil)) return null;
-  return state.farmerFedUntil + FARMER_COLLAPSE_MS;
+  return state.farmerFedUntil + farmerCollapseMs();
 }
 
 /* How much of the collapse grace period is left, 1 down to 0. Only meaningful
@@ -366,7 +409,7 @@ function farmerCollapseAt() {
 function farmerStamina() {
   const collapseAt = farmerCollapseAt();
   if (collapseAt === null) return 0;
-  return clamp01((collapseAt - Date.now()) / FARMER_COLLAPSE_MS);
+  return clamp01((collapseAt - Date.now()) / farmerCollapseMs());
 }
 
 function canFeedFarmer() {
@@ -392,7 +435,7 @@ function plotProgress(plot) {
 function freshness(plot) {
   if (!plot.crop || plot.rotten) return 0;
   if (!Number.isFinite(plot.spoilsAt)) return 1;
-  return clamp01((plot.spoilsAt - Date.now()) / CROP_SPOIL_MS);
+  return clamp01((plot.spoilsAt - Date.now()) / cropSpoilMs());
 }
 
 function isWilting(plot) {
@@ -405,7 +448,7 @@ function isWilting(plot) {
 function fedness(animal) {
   if (animal.state !== 'hungry') return 1;
   if (!Number.isFinite(animal.starvesAt)) return 1;
-  return clamp01((animal.starvesAt - Date.now()) / ANIMAL_STARVE_MS);
+  return clamp01((animal.starvesAt - Date.now()) / animalStarveMs());
 }
 
 function isStarving(animal) {
@@ -450,7 +493,7 @@ function updateSpoilage() {
     if (plotProgress(plot) < 1) return;
     if (!Number.isFinite(plot.spoilsAt)) {
       // First tick that sees it ripe starts the countdown.
-      plot.spoilsAt = now + CROP_SPOIL_MS;
+      plot.spoilsAt = now + cropSpoilMs();
       changed = true;
     } else if (now >= plot.spoilsAt) {
       plot.rotten = true;
@@ -472,7 +515,7 @@ function updateStarvation() {
       if (animal.state !== 'hungry') return true;
       if (!Number.isFinite(animal.starvesAt)) {
         // First tick that sees it hungry starts the countdown.
-        animal.starvesAt = now + ANIMAL_STARVE_MS;
+        animal.starvesAt = now + animalStarveMs();
         changed = true;
         return true;
       }
@@ -565,7 +608,8 @@ function animalProgress(animal, def) {
 }
 
 function goodPrice(key) {
-  return Math.round(GOODS[key].sellPrice * (1 + 0.10 * upgradeLevel('contacts')));
+  const base = GOODS[key].sellPrice * (1 + 0.10 * upgradeLevel('contacts'));
+  return Math.max(1, Math.round(base * difficulty().price));
 }
 
 // Older save slots, newest first. Kept so bumping SAVE_KEY upgrades a player's
@@ -662,6 +706,8 @@ function migrateSave(parsed) {
   if (merged.selectedSeed && !CROPS[merged.selectedSeed]) merged.selectedSeed = null;
   // An unknown dream home would leave the goal permanently unclaimable.
   if (!DREAM_HOMES[merged.dreamHome]) merged.dreamHome = null;
+  // Saves from before difficulty existed were played on the middle tier.
+  if (!DIFFICULTIES[merged.difficulty]) merged.difficulty = DEFAULT_DIFFICULTY;
   // Saves from before the farmer get the picker on their next load.
   if (!FARMERS[merged.farmer]) merged.farmer = null;
   if (!Number.isFinite(merged.farmerFedUntil)) merged.farmerFedUntil = null;
@@ -1075,11 +1121,26 @@ function helpSections() {
   const seconds = (ms) => `${Math.round(ms / 1000)}s`;
   const days = (n) => `${n} ${n === 1 ? 'day' : 'days'}`;
   const dayLen = seconds(DAY_LENGTH_MS);
+  // Effective, not nominal: the active tier stretches or shortens every clock.
+  const inDays = (ms) => days(Math.round((ms / DAY_LENGTH_MS) * 10) / 10);
+  const tier = difficulty();
   const mealGood = GOODS[FARMER_MEAL.good];
   const meal = `${FARMER_MEAL.amount} ${mealGood.emoji} `
     + `${mealGood.name.toLowerCase()}${FARMER_MEAL.amount === 1 ? '' : 's'}`;
 
   return [
+    {
+      emoji: tier.emoji, title: `Difficulty: ${tier.name}`,
+      lines: [
+        tier.blurb,
+        'The tier sets what produce fetches, how long the farm waits before '
+        + 'neglect costs you, how often raids land, and how much the weekly '
+        + 'subsidy is worth. Both dream homes cost the same on every tier, so '
+        + 'the difference shows up as how long the run takes.',
+        'Change it any time under Market → Difficulty. Every number in this '
+        + 'guide is the one your current tier is actually enforcing.',
+      ],
+    },
     {
       emoji: '🎯', title: 'The point of it all',
       lines: [
@@ -1095,11 +1156,11 @@ function helpSections() {
       emoji: FARMERS[state.farmer]?.emoji || '👩‍🌾', title: 'You, the farmer',
       lines: [
         'You do every job here: planting, harvesting, feeding, milking. And you eat.',
-        `A meal of ${meal} keeps you working for ${days(FARMER_MEAL_DAYS)}. `
+        `A meal of ${meal} keeps you working for ${inDays(farmerMealMs())}. `
         + 'Let the energy bar empty and you are exhausted — every harvest is halved '
         + 'until you eat again. It never drops to nothing, so you can always harvest '
         + 'your way back to a meal.',
-        `Exhaustion is a warning, not the end. Ignore it for ${days(FARMER_COLLAPSE_DAYS)} `
+        `Exhaustion is a warning, not the end. Ignore it for ${inDays(farmerCollapseMs())} `
         + 'and the farmer collapses — that is game over, and the only way on is a new '
         + 'farm or a loaded save. The bar counts down to it once exhaustion sets in.',
         'Your choice of farmer can be changed any time under Market → Farmer.',
@@ -1119,7 +1180,7 @@ function helpSections() {
     {
       emoji: '🥀', title: 'Crops go off',
       lines: [
-        `Once a crop is ripe you have ${days(CROP_SPOIL_DAYS)} to harvest it. The plot's `
+        `Once a crop is ripe you have ${inDays(cropSpoilMs())} to harvest it. The plot's `
         + 'bar switches from growth to freshness and drains; in the last stretch it '
         + 'turns red with an ⏳.',
         'Leave it too long and it rots. A rotten plot yields nothing and has to be '
@@ -1143,7 +1204,7 @@ function helpSections() {
     {
       emoji: '💀', title: 'Animals get hungry',
       lines: [
-        `An animal left hungry for ${days(ANIMAL_STARVE_DAYS)} starves and is gone. `
+        `An animal left hungry for ${inDays(animalStarveMs())} starves and is gone. `
         + 'Its bar counts down to that, and the card turns red with a pulsing '
         + '"Starving!" for the last stretch.',
         'A starving animal can still be sold, so it is never a total loss. Like crop '
@@ -1195,7 +1256,7 @@ function helpSections() {
         + 'spoilage and raids are all paused while you are away, so nothing is ever '
         + 'lost overnight.',
         `Every ${WEEK_LENGTH_DAYS} days the farm keeps going, a government subsidy `
-        + `of ${SUBSIDY_AMOUNT}\uD83D\uDCB0 arrives — the first on day ${WEEK_LENGTH_DAYS + 1}. `
+        + `of ${subsidyAmount()}\uD83D\uDCB0 arrives — the first on day ${WEEK_LENGTH_DAYS + 1}. `
         + 'Those are days of play, not days on the calendar, so the subsidy has to be '
         + 'earned at the wheel. Steady but small either way: enough to stop a '
         + 'struggling farm stalling out, nowhere near enough to live on.',
@@ -1257,6 +1318,8 @@ function renderFarmerPicker() {
   picker.classList.toggle('hidden', !needed);
   if (!needed) return;
 
+  renderDifficultyChoice('pickerDifficulty');
+
   const options = document.getElementById('farmerPickerOptions');
   if (options.children.length === FARMER_ORDER.length) return;
 
@@ -1281,7 +1344,7 @@ function chooseFarmer(key) {
   const first = !state.farmer;
   state.farmer = key;
   // Nobody starts a day's work on an empty stomach.
-  if (first) state.farmerFedUntil = Date.now() + FARMER_MEAL_MS;
+  if (first) state.farmerFedUntil = Date.now() + farmerMealMs();
   SFX.buy();
   showToast(`${FARMERS[key].emoji} ${first ? 'Welcome to the farm!' : 'Farmer changed.'}`);
   saveState();
@@ -1342,7 +1405,7 @@ function feedFarmer() {
     return;
   }
   state.inventory[FARMER_MEAL.good] -= FARMER_MEAL.amount;
-  state.farmerFedUntil = Date.now() + FARMER_MEAL_MS;
+  state.farmerFedUntil = Date.now() + farmerMealMs();
   state.farmerWarned = false;
   state.farmerCritical = false;
   SFX.feed();
@@ -1352,6 +1415,68 @@ function feedFarmer() {
 }
 
 // Lets a mis-tap on the first screen be undone, from Market -> Farmer.
+/* Three cards, one per tier, in both the first-run picker and the market. The
+   picker copy stays put when a tier is chosen — only the farmer buttons close
+   the dialog, so difficulty is settled before the game starts. */
+function renderDifficultyChoice(containerId) {
+  const wrap = document.getElementById(containerId);
+  if (!wrap) return;
+  if (wrap.children.length !== DIFFICULTY_ORDER.length) {
+    wrap.innerHTML = '';
+    DIFFICULTY_ORDER.forEach(() => wrap.appendChild(document.createElement('button')));
+  }
+  const compact = wrap.classList.contains('compact');
+
+  DIFFICULTY_ORDER.forEach((key, i) => {
+    const tier = DIFFICULTIES[key];
+    const active = state.difficulty === key;
+    const btn = wrap.children[i];
+    const sig = `${key}:${active}:${compact}`;
+    if (btn.dataset.sig !== sig) {
+      btn.className = `difficulty-btn${active ? ' active' : ''}`;
+      btn.setAttribute('aria-pressed', String(active));
+      btn.setAttribute('aria-label', `${tier.name} difficulty`);
+      btn.innerHTML = '';
+
+      const head = document.createElement('span');
+      head.className = 'difficulty-name';
+      head.textContent = `${tier.emoji} ${tier.name}`;
+      btn.appendChild(head);
+
+      if (!compact) {
+        const blurb = document.createElement('span');
+        blurb.className = 'difficulty-blurb';
+        blurb.textContent = tier.blurb;
+        btn.appendChild(blurb);
+
+        const facts = document.createElement('span');
+        facts.className = 'difficulty-facts';
+        facts.textContent = [
+          `Prices ${tier.price === 1 ? 'standard' : `${tier.price > 1 ? '+' : ''}${Math.round((tier.price - 1) * 100)}%`}`,
+          `clocks ${tier.patience === 1 ? 'standard' : `x${tier.patience}`}`,
+          `raids ${tier.raidGap === 1 ? 'standard' : (tier.raidGap > 1 ? 'rarer' : 'more often')}`,
+          `subsidy ${Math.round(SUBSIDY_AMOUNT * tier.subsidy)}\uD83D\uDCB0`,
+        ].join(' \u00b7 ');
+        btn.appendChild(facts);
+      }
+      btn.dataset.sig = sig;
+    }
+    btn.onclick = () => setDifficulty(key);
+  });
+}
+
+function setDifficulty(key) {
+  if (!DIFFICULTIES[key] || state.difficulty === key) return;
+  const tier = DIFFICULTIES[key];
+  state.difficulty = key;
+  // A brand new farm has not been dealt its purse yet, so match it to the tier.
+  if (!state.farmer && state.stats.totalCoinsEarned === 0) state.coins = tier.startCoins;
+  SFX.click();
+  showToast(`${tier.emoji} Difficulty: ${tier.name}. ${tier.blurb}`);
+  saveState();
+  render();
+}
+
 function renderFarmerChoice() {
   const wrap = document.getElementById('farmerChoice');
   if (wrap.children.length !== FARMER_ORDER.length) {
@@ -2143,12 +2268,12 @@ function updateRaids() {
 
   if (now >= state.nextWolfRaidAt) {
     if (now - state.nextWolfRaidAt < RAID_STALE_MS) resolveWolfRaid();
-    state.nextWolfRaidAt = scheduleRaid(WOLF_RAID_MIN_MS, WOLF_RAID_MAX_MS);
+    state.nextWolfRaidAt = scheduleRaid(raidGap(WOLF_RAID_MIN_MS), raidGap(WOLF_RAID_MAX_MS));
     changed = true;
   }
   if (now >= state.nextPestRaidAt) {
     if (now - state.nextPestRaidAt < RAID_STALE_MS) resolvePestRaid();
-    state.nextPestRaidAt = scheduleRaid(PEST_RAID_MIN_MS, PEST_RAID_MAX_MS);
+    state.nextPestRaidAt = scheduleRaid(raidGap(PEST_RAID_MIN_MS), raidGap(PEST_RAID_MAX_MS));
     changed = true;
   }
   if (changed) saveState();
@@ -2645,7 +2770,7 @@ function updateSubsidy() {
   const owed = weeksSurvived() - state.subsidiesPaid;
   if (owed <= 0) return;
 
-  const amount = owed * SUBSIDY_AMOUNT;
+  const amount = owed * subsidyAmount();
   state.coins += amount;
   state.stats.totalCoinsEarned += amount;
   state.subsidiesPaid += owed;
@@ -2882,6 +3007,7 @@ function render() {
     renderBuyButtons();
   } else if (activeTab === 'market') {
     renderMarket();
+    renderDifficultyChoice('difficultyChoice');
     renderFarmerChoice();
   } else if (activeTab === 'achievements') {
     renderAchievements();

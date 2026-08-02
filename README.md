@@ -21,6 +21,19 @@ screen can never drift from the rules being enforced.
 
 ## How it works
 
+- **Difficulty** — three tiers, chosen on the first screen and changeable any
+  time under Market → Difficulty:
+
+  | | Prices | Spoil/hunger clocks | Raids | Subsidy | Start |
+  |---|---|---|---|---|---|
+  | 🌻 **Relaxed** | +25% | ×2 | rarer | 150 | 200 |
+  | 🚜 **Farmer** | standard | standard | standard | 100 | 100 |
+  | 🌪️ **Hard** | −20% | ×0.5 | ~2× as often | 50 | 50 |
+
+  Both dream homes cost 20,000 and 40,000 on every tier, so the difficulty
+  shows up as how long the run takes rather than as a different finish line.
+  The in-game guide always quotes the numbers your current tier is enforcing.
+
 - **The farmer** — the first thing a new game asks is who is running the place:
   a female or male farmer. They do every job here, and they eat too. A meal of
   **2 pumpkins** keeps them going for three in-game days.
@@ -165,7 +178,7 @@ npm test
 `tests/game.spec.js` covers the core loop, the farmer and their meals, animal
 production, guardians and raids, guard coverage scaling with the farm, feeding
 a dog on livestock, crop spoilage, animal starvation, the market, upgrades,
-achievements, the two dream homes, the weekly subsidy, the day cycle, save loading/migration, the
+achievements, the two dream homes, the weekly subsidy, the difficulty tiers, the day cycle, save loading/migration, the
 welcome-back summary, the help panel, the farmer's collapse and game over,
 the ending celebration, keyboard operability, and offline play. It also asserts that the
 once-a-second render reuses DOM nodes, since rebuilding them would silently

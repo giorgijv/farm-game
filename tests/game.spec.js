@@ -215,6 +215,130 @@ test.describe('explanations', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Difficulty tiers                                                    */
+/* ------------------------------------------------------------------ */
+
+test.describe('difficulty', () => {
+  const tierBtn = (page, i) => page.locator('#difficultyChoice .difficulty-btn').nth(i);
+  const openMarket = (page) => page.getByRole('button', { name: /Market/ }).click();
+
+  test('three tiers are offered, with the middle one the default', async ({ page }) => {
+    await load(page, makeSave());
+    await openMarket(page);
+
+    await expect(page.locator('#difficultyChoice .difficulty-btn')).toHaveCount(3);
+    await expect(tierBtn(page, 0)).toContainText('Relaxed');
+    await expect(tierBtn(page, 1)).toContainText('Farmer');
+    await expect(tierBtn(page, 2)).toContainText('Hard');
+
+    // A save with no tier recorded is the middle one, so nothing rebalances
+    // under an existing player.
+    const save = makeSave();
+    delete save.difficulty;
+    await load(page, save);
+    expect((await readSave(page)).difficulty).toBe('farmer');
+  });
+
+  test('a tier can be picked and it sticks', async ({ page }) => {
+    await load(page, makeSave());
+    await openMarket(page);
+
+    await tierBtn(page, 2).click();
+
+    expect((await readSave(page)).difficulty).toBe('hard');
+    await expect(tierBtn(page, 2)).toHaveAttribute('aria-pressed', 'true');
+    await expect(tierBtn(page, 1)).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('a new game is asked the question before the first seed', async ({ page }) => {
+    await load(page, makeSave({ farmer: null, farmerFedUntil: null }));
+
+    await expect(page.locator('#farmerPicker')).toBeVisible();
+    await expect(page.locator('#pickerDifficulty .difficulty-btn')).toHaveCount(3);
+
+    // Choosing a tier does not dismiss the picker — only a farmer does.
+    await page.locator('#pickerDifficulty .difficulty-btn').first().click();
+    await expect(page.locator('#farmerPicker')).toBeVisible();
+    expect((await readSave(page)).difficulty).toBe('relaxed');
+
+    await page.locator('.farmer-option').first().click();
+    await expect(page.locator('#farmerPicker')).toBeHidden();
+  });
+
+  test('the tier moves prices', async ({ page }) => {
+    const stock = { wheat: 0, corn: 0, carrot: 0, pumpkin: 0, milk: 10, egg: 0, wool: 0 };
+
+    await load(page, makeSave({ difficulty: 'farmer', inventory: { ...stock } }));
+    expect(await page.evaluate(() => goodPrice('milk'))).toBe(9);
+
+    await load(page, makeSave({ difficulty: 'relaxed', inventory: { ...stock } }));
+    expect(await page.evaluate(() => goodPrice('milk'))).toBe(11); // 9 x 1.25
+
+    await load(page, makeSave({ difficulty: 'hard', inventory: { ...stock } }));
+    expect(await page.evaluate(() => goodPrice('milk'))).toBe(7);  // 9 x 0.8
+  });
+
+  test('the tier stretches every clock the farm punishes you with', async ({ page }) => {
+    const windows = () => page.evaluate(() => ({
+      spoil: cropSpoilMs(),
+      starve: animalStarveMs(),
+      meal: farmerMealMs(),
+      collapse: farmerCollapseMs(),
+    }));
+
+    await load(page, makeSave({ difficulty: 'farmer' }));
+    const mid = await windows();
+
+    await load(page, makeSave({ difficulty: 'relaxed' }));
+    const easy = await windows();
+    await load(page, makeSave({ difficulty: 'hard' }));
+    const hard = await windows();
+
+    for (const k of ['spoil', 'starve', 'meal', 'collapse']) {
+      expect(easy[k], `${k} should be roomier on relaxed`).toBe(mid[k] * 2);
+      expect(hard[k], `${k} should be tighter on hard`).toBe(mid[k] * 0.5);
+    }
+  });
+
+  test('the tier changes the subsidy and raid frequency', async ({ page }) => {
+    await load(page, makeSave({ difficulty: 'relaxed' }));
+    expect(await page.evaluate(() => subsidyAmount())).toBe(150);
+    expect(await page.evaluate(() => raidGap(100))).toBeGreaterThan(100);
+
+    await load(page, makeSave({ difficulty: 'hard' }));
+    expect(await page.evaluate(() => subsidyAmount())).toBe(50);
+    expect(await page.evaluate(() => raidGap(100))).toBeLessThan(100);
+  });
+
+  test('the dream homes cost the same on every tier', async ({ page }) => {
+    for (const tier of ['relaxed', 'farmer', 'hard']) {
+      await load(page, makeSave({ difficulty: tier }));
+      const costs = await page.evaluate(() =>
+        DREAM_ORDER.map((k) => DREAM_HOMES[k].cost));
+      expect(costs, `${tier} should not move the finish line`).toEqual([20000, 40000]);
+    }
+  });
+
+  test('the help panel reports the tier actually in force', async ({ page }) => {
+    await load(page, makeSave({ difficulty: 'hard' }));
+    await page.locator('#helpBtn').click();
+
+    const text = await page.locator('#helpBody').textContent();
+    expect(text).toContain('Difficulty: Hard');
+    expect(text).toContain('1 day to harvest it');   // 2 days halved
+    expect(text).toContain('for 2 days starves');    // 4 days halved
+    expect(text).toContain('of 50');                 // subsidy halved
+  });
+
+  test('an unknown tier in a save falls back rather than breaking the rules', async ({ page }) => {
+    await load(page, makeSave({ difficulty: 'impossible' }));
+
+    expect((await readSave(page)).difficulty).toBe('farmer');
+    expect(await page.evaluate(() => goodPrice('milk'))).toBe(9);
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* The farmer                                                          */
 /* ------------------------------------------------------------------ */
 

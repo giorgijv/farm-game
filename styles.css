@@ -2220,6 +2220,85 @@ body {
   box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.45), 0 4px 0 #a89a79;
 }
 
+/* Difficulty tiers: three cards, in the first-run picker and in the market. */
+.difficulty-choice {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.difficulty-choice.compact {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.difficulty-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 13px 13px 12px;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  color: #5a3a12;
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--parchment) 0%, var(--parchment-deep) 100%);
+  border: 3px solid var(--wood-dark);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.8), 0 4px 0 var(--wood-dark);
+  transition: transform 0.09s ease, box-shadow 0.09s ease;
+}
+
+.difficulty-choice.compact .difficulty-btn {
+  align-items: center;
+  padding: 11px 6px;
+  text-align: center;
+}
+
+.difficulty-btn:active {
+  transform: translateY(3px);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.7), 0 1px 0 var(--wood-dark);
+}
+
+.difficulty-btn.active {
+  color: #2f5410;
+  background: linear-gradient(180deg, #d9f5bd 0%, #b6e58c 100%);
+  border-color: var(--good-deep);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.8), 0 4px 0 var(--good-deep);
+}
+
+.difficulty-name {
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.difficulty-choice.compact .difficulty-name { font-size: 0.8rem; }
+
+.difficulty-blurb {
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--text-soft);
+}
+
+.difficulty-btn.active .difficulty-blurb { color: #3d6b1c; }
+
+.difficulty-facts {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  color: var(--gold-deep);
+}
+
+.difficulty-btn.active .difficulty-facts { color: var(--good-deep); }
+
+.picker-subhead {
+  margin-top: 16px;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
 /* Market -> Farmer, so a mis-tap on the first screen is not permanent. */
 .farmer-choice {
   display: flex;
